@@ -154,14 +154,12 @@
   padding: 12px;
   background: #f5f5f5;
   border-radius: 10px;
-  cursor: pointer;
   transition: all 0.3s;
 }
 
-.userItem:hover {
-  background: #667eea;
-  color: white;
-  transform: translateX(5px);
+.userConnected {
+  background: #e8f5e9;
+  border: 2px solid #4caf50;
 }
 
 .userIcon {
@@ -186,6 +184,21 @@
   font-size: 0.9rem;
 }
 
+.broadcastInfo {
+  margin-top: 20px;
+  padding: 15px;
+  background: #fff3cd;
+  border-radius: 10px;
+  border-left: 4px solid #ffc107;
+}
+
+.broadcastInfo p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #856404;
+  line-height: 1.5;
+}
+
 .chatArea {
   flex: 1;
   display: flex;
@@ -199,6 +212,25 @@
   display: flex;
   flex-direction: column;
   gap: 15px;
+}
+
+.emptyMessages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #999;
+  gap: 10px;
+}
+
+.emptyMessages p {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.emptyMessages p:first-child {
+  font-size: 2rem;
 }
 
 .message {
