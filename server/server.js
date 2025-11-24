@@ -50,7 +50,7 @@ const onlineUsers = new Map();
 app.post('/api/register', (req, res) => {
   const { peerId, username } = req.body;
   if (peerId && username) {
-    onlineUsers.set(peerId, { username, timestamp: Date.now() });
+    onlineUsers.set(peerId, { username, lastHeartbeat: Date.now() });
     console.log(`📝 用户注册: ${username} (${peerId})`);
     res.json({ success: true, peerId });
   } else {
@@ -70,6 +70,19 @@ app.post('/api/unregister', (req, res) => {
   }
 });
 
+// 心跳接口
+app.post('/api/heartbeat', (req, res) => {
+  const { peerId } = req.body;
+  if (peerId && onlineUsers.has(peerId)) {
+    const user = onlineUsers.get(peerId);
+    user.lastHeartbeat = Date.now();
+    onlineUsers.set(peerId, user);
+    res.json({ success: true });
+  } else {
+    res.status(404).json({ success: false, message: '用户不存在' });
+  }
+});
+
 app.get('/api/users', (req, res) => {
   const users = Array.from(onlineUsers.entries()).map(([peerId, data]) => ({
     peerId,
@@ -78,18 +91,18 @@ app.get('/api/users', (req, res) => {
   res.json({ users });
 });
 
-// 清理超时用户（5分钟无活动）
+// 清理超时用户（30秒无心跳）
 setInterval(() => {
   const now = Date.now();
-  const timeout = 5 * 60 * 1000; // 5分钟
-  
+  const timeout = 30 * 1000; // 30秒
+
   for (const [peerId, data] of onlineUsers.entries()) {
-    if (now - data.timestamp > timeout) {
-      console.log(`⏰ 清理超时用户: ${data.username} (${peerId})`);
+    if (now - data.lastHeartbeat > timeout) {
+      console.log(`🧹 清理超时用户: ${data.username} (${peerId})`);
       onlineUsers.delete(peerId);
     }
   }
-}, 60000); // 每分钟检查一次
+}, 10 * 1000); // 每10秒检查一次
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {

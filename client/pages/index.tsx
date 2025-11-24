@@ -32,6 +32,7 @@ export default function Home() {
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
@@ -42,12 +43,35 @@ export default function Home() {
     scrollToBottom()
   }, [messages])
 
+  // 页面刷新/关闭时清理
+  useEffect(() => {
+    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+      // 从服务器注销
+      const currentPeerId = peerRef.current?.id
+      if (currentPeerId) {
+        // 使用 sendBeacon 确保请求能发送出去
+        const data = JSON.stringify({ peerId: currentPeerId })
+        navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([data], { type: 'application/json' }))
+      }
+    }
+
+    window.addEventListener('beforeunload', handleBeforeUnload)
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [])
+
   // 组件卸载时清理
   useEffect(() => {
     return () => {
-      // 清除定时器
+      // 清除所有定时器
       if (userListIntervalRef.current) {
         clearInterval(userListIntervalRef.current)
+      }
+
+      if (heartbeatIntervalRef.current) {
+        clearInterval(heartbeatIntervalRef.current)
       }
 
       // 关闭所有连接
@@ -67,8 +91,32 @@ export default function Home() {
           // 忽略错误
         }
       }
+
+      // 从服务器注销
+      const currentPeerId = peerRef.current?.id
+      if (currentPeerId) {
+        navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([JSON.stringify({ peerId: currentPeerId })], { type: 'application/json' }))
+      }
     }
   }, [])
+
+  // 发送心跳
+  const sendHeartbeat = async () => {
+    // 使用 peerRef 获取当前 peerId
+    const currentPeerId = peerRef.current?.id
+    if (!currentPeerId || !peerRef.current || peerRef.current.destroyed) return
+
+    try {
+      await fetch(`${API_SERVER}/api/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: currentPeerId }),
+        signal: AbortSignal.timeout(3000)
+      })
+    } catch (error) {
+      // 忽略心跳错误
+    }
+  }
 
   // 获取在线用户列表
   const fetchOnlineUsers = async () => {
@@ -76,6 +124,9 @@ export default function Home() {
     if (!peerRef.current || peerRef.current.destroyed) {
       return
     }
+
+    // 获取当前的 peerId
+    const currentPeerId = peerRef.current.id
 
     try {
       const response = await fetch(`${API_SERVER}/api/users`, {
@@ -87,7 +138,11 @@ export default function Home() {
       }
 
       const data = await response.json()
-      const users = data.users.filter((u: OnlineUser) => u.peerId !== myPeerId)
+      console.log('📋 获取到用户列表:', data.users.length, '个用户')
+
+      // 使用当前的 peerId 过滤自己
+      const users = data.users.filter((u: OnlineUser) => u.peerId !== currentPeerId)
+      console.log('📋 过滤后:', users.length, '个其他用户')
       setOnlineUsers(users)
 
       // 自动连接到新用户
@@ -166,6 +221,13 @@ export default function Home() {
         })
 
         console.log('✅ 已注册到服务器')
+
+        // 启动心跳
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current)
+        }
+        heartbeatIntervalRef.current = setInterval(sendHeartbeat, 10000) // 每10秒发送心跳
+        sendHeartbeat() // 立即发送一次
 
         // 延迟一下再获取用户列表，确保连接稳定
         setTimeout(async () => {
@@ -305,10 +367,15 @@ export default function Home() {
 
   // 断开连接
   const disconnect = async () => {
-    // 清除定时器
+    // 清除所有定时器
     if (userListIntervalRef.current) {
       clearInterval(userListIntervalRef.current)
       userListIntervalRef.current = null
+    }
+
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current)
+      heartbeatIntervalRef.current = null
     }
 
     // 关闭所有连接
@@ -323,12 +390,13 @@ export default function Home() {
     setConnections(new Map())
 
     // 从API服务器注销
-    if (myPeerId) {
+    const currentPeerId = peerRef.current?.id || myPeerId
+    if (currentPeerId) {
       try {
         await fetch(`${API_SERVER}/api/unregister`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ peerId: myPeerId })
+          body: JSON.stringify({ peerId: currentPeerId })
         })
       } catch (error) {
         console.error('注销失败:', error)
