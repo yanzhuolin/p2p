@@ -530,6 +530,21 @@ export default function Home() {
 
     // 离开旧房间
     if (oldRoomId) {
+      // 把自己从房间列表中移除
+      setPlayersInRooms(prev => {
+        const newMap = new Map(prev)
+        const roomPlayers = newMap.get(oldRoomId)
+        if (roomPlayers) {
+          roomPlayers.delete(peerRef.current?.id || '')
+          if (roomPlayers.size === 0) {
+            newMap.delete(oldRoomId)
+          } else {
+            newMap.set(oldRoomId, roomPlayers)
+          }
+        }
+        return newMap
+      })
+
       const leaveUpdate: VoiceRoomUpdate = {
         type: 'voice-leave',
         peerId: peerRef.current?.id || '',
@@ -566,6 +581,15 @@ export default function Home() {
         setCurrentVoiceRoom(null)
         return
       }
+
+      // 把自己加入到房间列表
+      setPlayersInRooms(prev => {
+        const newMap = new Map(prev)
+        const roomPlayers = newMap.get(newRoomId) || new Set()
+        roomPlayers.add(peerRef.current?.id || '')
+        newMap.set(newRoomId, roomPlayers)
+        return newMap
+      })
 
       const joinUpdate: VoiceRoomUpdate = {
         type: 'voice-join',
