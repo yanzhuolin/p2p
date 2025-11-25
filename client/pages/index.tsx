@@ -20,7 +20,7 @@ interface OnlineUser {
 
 const SIGNALING_SERVER = 'localhost'
 const SIGNALING_PORT = 9000
-const API_SERVER = 'http://localhost:3001'
+const API_SERVER = 'http://192.168.120.44:3001'
 
 export default function Home() {
   // 基础状态
@@ -48,6 +48,7 @@ export default function Home() {
   const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const myPlayerRef = useRef<Player | null>(null)
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
@@ -139,7 +140,11 @@ export default function Home() {
     if (!myPlayer) return
 
     // 更新本地玩家位置
-    setMyPlayer(prev => prev ? { ...prev, position, velocity, lastUpdate: Date.now() } : null)
+    setMyPlayer(prev => {
+      const updated = prev ? { ...prev, position, velocity, lastUpdate: Date.now() } : null
+      myPlayerRef.current = updated
+      return updated
+    })
 
     // 广播位置更新
     const update: PlayerUpdate = {
@@ -170,6 +175,8 @@ export default function Home() {
       lastUpdate: Date.now()
     }
     setMyPlayer(player)
+    myPlayerRef.current = player
+    console.log('🎮 创建玩家对象:', player)
 
     // 广播加入游戏
     const update: PlayerUpdate = {
@@ -249,16 +256,19 @@ export default function Home() {
         setConnections(new Map(connectionsRef.current))
 
         // 如果已经选择了角色，发送加入消息
-        if (myPlayer) {
+        if (myPlayerRef.current) {
           const update: PlayerUpdate = {
             type: 'join',
-            peerId: myPlayer.peerId,
-            username: myPlayer.username,
-            character: myPlayer.character,
-            position: myPlayer.position,
+            peerId: myPlayerRef.current.peerId,
+            username: myPlayerRef.current.username,
+            character: myPlayerRef.current.character,
+            position: myPlayerRef.current.position,
             timestamp: Date.now()
           }
+          console.log('📤 发送我的状态给:', peerId, update)
           conn.send(JSON.stringify(update))
+        } else {
+          console.log('⚠️ 连接建立但还没有选择角色')
         }
       })
 
@@ -326,6 +336,7 @@ export default function Home() {
 
   // 处理游戏更新
   const handleGameUpdate = (update: PlayerUpdate, fromPeerId: string) => {
+    console.log('🎮 收到游戏更新:', update.type, 'from', fromPeerId)
     switch (update.type) {
       case 'join':
         if (update.username && update.character && update.position) {
@@ -337,8 +348,13 @@ export default function Home() {
             velocity: { x: 0, y: 0 },
             lastUpdate: Date.now()
           }
-          setOtherPlayers(prev => new Map(prev).set(fromPeerId, newPlayer))
-          console.log('🎮 玩家加入:', update.username)
+          setOtherPlayers(prev => {
+            const updated = new Map(prev).set(fromPeerId, newPlayer)
+            console.log('🎮 玩家加入:', update.username, '当前其他玩家数:', updated.size)
+            return updated
+          })
+        } else {
+          console.log('⚠️ join 消息缺少必要字段:', update)
         }
         break
 
@@ -435,16 +451,19 @@ export default function Home() {
         setConnections(new Map(connectionsRef.current))
 
         // 如果已经选择了角色，发送加入消息
-        if (myPlayer) {
+        if (myPlayerRef.current) {
           const update: PlayerUpdate = {
             type: 'join',
-            peerId: myPlayer.peerId,
-            username: myPlayer.username,
-            character: myPlayer.character,
-            position: myPlayer.position,
+            peerId: myPlayerRef.current.peerId,
+            username: myPlayerRef.current.username,
+            character: myPlayerRef.current.character,
+            position: myPlayerRef.current.position,
             timestamp: Date.now()
           }
+          console.log('📤 发送我的状态给新连接:', conn.peer, update)
           conn.send(JSON.stringify(update))
+        } else {
+          console.log('⚠️ 接受连接但还没有选择角色')
         }
       })
 
@@ -581,6 +600,7 @@ export default function Home() {
     setMessages([])
     setOnlineUsers([])
     setMyPlayer(null)
+    myPlayerRef.current = null
     setOtherPlayers(new Map())
     setSelectedCharacter(null)
 
