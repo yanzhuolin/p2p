@@ -2,16 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import Peer, { DataConnection, MediaConnection } from 'peerjs'
 import GameWorld from '../components/GameWorld'
 import CharacterSelect from '../components/CharacterSelect'
-import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '../types/game'
+import ChatPanel from '../components/ChatPanel'
+import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '@/types/game'
+import { useChatStore, Message } from '@/store/chatStore'
 import styles from '../styles/Game.module.css'
-
-interface Message {
-  id: string
-  text: string
-  sender: string
-  timestamp: number
-  isMine: boolean
-}
 
 interface OnlineUser {
   peerId: string
@@ -36,11 +30,10 @@ export default function Home() {
   const [otherPlayers, setOtherPlayers] = useState<Map<string, Player>>(new Map())
 
   // 聊天状态
-  const [messages, setMessages] = useState<Message[]>([])
-  const [messageInput, setMessageInput] = useState('')
+  const addMessage = useChatStore((state) => state.addMessage)
+  const clearMessages = useChatStore((state) => state.clearMessages)
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([])
   const [connections, setConnections] = useState<Map<string, DataConnection>>(new Map())
-  const [showChat, setShowChat] = useState(true)
 
   // 语音状态
   const [currentVoiceRoom, setCurrentVoiceRoom] = useState<string | null>(null)
@@ -57,7 +50,6 @@ export default function Home() {
   // Refs
   const peerRef = useRef<Peer | null>(null)
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map())
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -73,11 +65,6 @@ export default function Home() {
   const myVolumeIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const audioSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map())
-
-  // 自动滚动到最新消息
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
 
   // 使用 ScriptProcessor 创建音频分析器并开始监听音量
   const startVolumeMonitoring = (stream: MediaStream, peerId: string | null = null) => {
@@ -193,9 +180,7 @@ export default function Home() {
     }
   }
 
-  useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+
 
   // 页面刷新/关闭时清理
   useEffect(() => {
@@ -757,18 +742,13 @@ export default function Home() {
       else if (parsed.text) {
         const message: Message = {
           id: parsed.id || `${Date.now()}-${Math.random()}`,
+          peerId: fromPeerId,
+          username: parsed.username || parsed.sender || '未知用户',
           text: parsed.text,
-          sender: parsed.sender,
-          timestamp: parsed.timestamp,
-          isMine: false
+          timestamp: parsed.timestamp
         }
 
-        setMessages(prev => {
-          if (prev.some(m => m.id === message.id)) {
-            return prev
-          }
-          return [...prev, message]
-        })
+        addMessage(message)
       }
     } catch (error) {
       console.error('处理数据失败:', error)
@@ -1049,40 +1029,35 @@ export default function Home() {
   }
 
   // 发送消息
-  const sendMessage = () => {
-    if (!messageInput.trim()) return
+  const sendMessage = (text: string) => {
+    if (!text.trim()) return
 
     const message: Message = {
       id: `${Date.now()}-${Math.random()}`,
-      text: messageInput,
-      sender: username,
-      timestamp: Date.now(),
-      isMine: true
+      peerId: myPeerId,
+      username: username,
+      text: text,
+      timestamp: Date.now()
     }
 
-    setMessages(prev => [...prev, message])
+    addMessage(message)
 
     const messageData = {
       id: message.id,
       text: message.text,
-      sender: message.sender,
+      username: message.username,
       timestamp: message.timestamp
     }
 
-    let sentCount = 0
     connectionsRef.current.forEach((conn) => {
       if (conn.open) {
         try {
           conn.send(JSON.stringify(messageData))
-          sentCount++
         } catch (error) {
           console.error('发送消息失败:', error)
         }
       }
     })
-
-    console.log(`📤 消息已广播给 ${sentCount} 个用户`)
-    setMessageInput('')
   }
 
   // 断开连接
@@ -1183,7 +1158,7 @@ export default function Home() {
 
     setIsConnected(false)
     setMyPeerId('')
-    setMessages([])
+    clearMessages()
     setOnlineUsers([])
     setMyPlayer(null)
     myPlayerRef.current = null
@@ -1416,60 +1391,7 @@ export default function Home() {
         )}
 
         {/* 聊天面板 */}
-        <div className={`${styles.chatPanel} ${showChat ? styles.chatVisible : styles.chatHidden}`}>
-          <div className={styles.chatHeader}>
-            <h3>💬 聊天</h3>
-            <button
-              onClick={() => setShowChat(!showChat)}
-              className={styles.toggleChatBtn}
-            >
-              {showChat ? '▼' : '▲'}
-            </button>
-          </div>
-
-          {showChat && (
-            <>
-              <div className={styles.messagesContainer}>
-                {messages.length === 0 ? (
-                  <div className={styles.emptyMessages}>
-                    <p>💬 还没有消息</p>
-                    <p>发送第一条消息吧！</p>
-                  </div>
-                ) : (
-                  messages.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className={`${styles.message} ${
-                        msg.isMine ? styles.myMessage : styles.otherMessage
-                      }`}
-                    >
-                      <div className={styles.messageSender}>{msg.sender}</div>
-                      <div className={styles.messageText}>{msg.text}</div>
-                      <div className={styles.messageTime}>
-                        {new Date(msg.timestamp).toLocaleTimeString()}
-                      </div>
-                    </div>
-                  ))
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-
-              <div className={styles.inputContainer}>
-                <input
-                  type="text"
-                  placeholder="输入消息..."
-                  value={messageInput}
-                  onChange={(e) => setMessageInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                  className={styles.messageInput}
-                />
-                <button onClick={sendMessage} className={styles.sendButton}>
-                  📤
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        <ChatPanel myPeerId={myPeerId} onSendMessage={sendMessage} />
       </div>
     </div>
   )
