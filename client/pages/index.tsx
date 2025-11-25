@@ -50,6 +50,9 @@ export default function Home() {
   const [showVoicePanel, setShowVoicePanel] = useState(true)
   const [playerVolumes, setPlayerVolumes] = useState<Map<string, number>>(new Map())
   const [myVolume, setMyVolume] = useState(0)
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
+  const [showDeviceSelector, setShowDeviceSelector] = useState(false)
 
   // Refs
   const peerRef = useRef<Peer | null>(null)
@@ -68,57 +71,79 @@ export default function Home() {
   const localAnalyzerRef = useRef<AnalyserNode | null>(null)
   const volumeIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
   const myVolumeIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const audioSourcesRef = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map())
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // 创建音频分析器并开始监听音量
+  // 使用 ScriptProcessor 创建音频分析器并开始监听音量
   const startVolumeMonitoring = (stream: MediaStream, peerId: string | null = null) => {
     try {
-      const audioContext = new AudioContext()
-      const analyser = audioContext.createAnalyser()
-      analyser.fftSize = 256
-      analyser.smoothingTimeConstant = 0.8
+      // 复用或创建 AudioContext
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext()
+      }
 
+      const audioContext = audioContextRef.current
+
+      // 确保 AudioContext 已启动
+      if (audioContext.state === 'suspended') {
+        audioContext.resume()
+      }
+
+      // 每次都创建新的 source（因为 stream 可能不同）
+      const sourceKey = peerId || 'local'
+
+      // 先断开旧的连接
+      const oldSource = audioSourcesRef.current.get(sourceKey)
+      if (oldSource) {
+        try {
+          oldSource.disconnect()
+        } catch (e) {}
+      }
+
+      // 创建新的 source
       const source = audioContext.createMediaStreamSource(stream)
-      source.connect(analyser)
+      audioSourcesRef.current.set(sourceKey, source)
 
-      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+      // 使用 ScriptProcessorNode
+      const processor = audioContext.createScriptProcessor(2048, 1, 1)
 
-      if (peerId) {
-        // 远程玩家的音量
-        audioAnalyzersRef.current.set(peerId, analyser)
+      processor.onaudioprocess = (e) => {
+        const inputData = e.inputBuffer.getChannelData(0)
 
-        const interval = setInterval(() => {
-          analyser.getByteFrequencyData(dataArray)
-          const average = dataArray.reduce((a, b) => a + b) / dataArray.length
-          const volume = Math.min(100, Math.round((average / 255) * 100))
+        // 计算 RMS 音量
+        let sum = 0
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i]
+        }
+        const rms = Math.sqrt(sum / inputData.length)
+        const volume = Math.min(100, Math.round(rms * 500))
 
+        if (peerId) {
           setPlayerVolumes(prev => {
             const newMap = new Map(prev)
             newMap.set(peerId, volume)
             return newMap
           })
-        }, 100)
-
-        volumeIntervalsRef.current.set(peerId, interval)
-      } else {
-        // 本地玩家的音量
-        localAnalyzerRef.current = analyser
-
-        const interval = setInterval(() => {
-          analyser.getByteFrequencyData(dataArray)
-          const average = dataArray.reduce((a, b) => a + b) / dataArray.length
-          const volume = Math.min(100, Math.round((average / 255) * 100))
+        } else {
           setMyVolume(volume)
-        }, 100)
-
-        myVolumeIntervalRef.current = interval
+        }
       }
 
-      console.log(`🔊 开始监听音量:`, peerId || '本地')
+      // 连接：source -> processor -> destination
+      source.connect(processor)
+      processor.connect(audioContext.destination)
+
+      // 保存 processor 以便后续清理
+      if (peerId) {
+        audioAnalyzersRef.current.set(peerId, processor as any)
+      } else {
+        localAnalyzerRef.current = processor as any
+      }
     } catch (error) {
       console.error('创建音频分析器失败:', error)
     }
@@ -127,23 +152,43 @@ export default function Home() {
   // 停止音量监听
   const stopVolumeMonitoring = (peerId: string | null = null) => {
     if (peerId) {
-      const interval = volumeIntervalsRef.current.get(peerId)
-      if (interval) {
-        clearInterval(interval)
-        volumeIntervalsRef.current.delete(peerId)
+      const processor = audioAnalyzersRef.current.get(peerId)
+      if (processor) {
+        try {
+          processor.disconnect()
+        } catch (e) {}
+        audioAnalyzersRef.current.delete(peerId)
       }
-      audioAnalyzersRef.current.delete(peerId)
+
+      const source = audioSourcesRef.current.get(peerId)
+      if (source) {
+        try {
+          source.disconnect()
+        } catch (e) {}
+        audioSourcesRef.current.delete(peerId)
+      }
+
       setPlayerVolumes(prev => {
         const newMap = new Map(prev)
         newMap.delete(peerId)
         return newMap
       })
     } else {
-      if (myVolumeIntervalRef.current) {
-        clearInterval(myVolumeIntervalRef.current)
-        myVolumeIntervalRef.current = null
+      if (localAnalyzerRef.current) {
+        try {
+          localAnalyzerRef.current.disconnect()
+        } catch (e) {}
+        localAnalyzerRef.current = null
       }
-      localAnalyzerRef.current = null
+
+      const source = audioSourcesRef.current.get('local')
+      if (source) {
+        try {
+          source.disconnect()
+        } catch (e) {}
+        audioSourcesRef.current.delete('local')
+      }
+
       setMyVolume(0)
     }
   }
@@ -282,52 +327,58 @@ export default function Home() {
     }
   }
 
-  // 获取麦克风权限并创建音频流
-  const enableMicrophone = async () => {
+  // 获取可用的音频输入设备
+  const loadAudioDevices = async () => {
     try {
-      // 检查浏览器是否支持 getUserMedia
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const audioInputs = devices.filter(device => device.kind === 'audioinput')
+      setAudioDevices(audioInputs)
+
+      // 优先选择默认设备（deviceId 为 'default' 或第一个设备）
+      let deviceToUse = selectedDeviceId
+      if (!deviceToUse && audioInputs.length > 0) {
+        const defaultDevice = audioInputs.find(d => d.deviceId === 'default') || audioInputs[0]
+        deviceToUse = defaultDevice.deviceId
+        setSelectedDeviceId(deviceToUse)
+      }
+
+      return { devices: audioInputs, selectedDevice: deviceToUse }
+    } catch (error) {
+      console.error('获取音频设备失败:', error)
+      return { devices: [], selectedDevice: '' }
+    }
+  }
+
+  // 获取麦克风权限并创建音频流
+  const enableMicrophone = async (deviceId?: string) => {
+    try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.error('❌ 浏览器不支持 getUserMedia')
         alert('您的浏览器不支持语音功能，请使用最新版本的 Chrome、Edge 或 Firefox')
         return null
       }
 
-      console.log('🎤 正在请求麦克风权限...')
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
+      const constraints: MediaStreamConstraints = {
+        audio: deviceId ? {
+          deviceId: { exact: deviceId },
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } : {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
         },
         video: false
-      })
+      }
 
-      // 确保音频轨道未被静音
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+
       stream.getAudioTracks().forEach(track => {
         track.enabled = true
-        console.log('🎤 音频轨道状态:', {
-          id: track.id,
-          label: track.label,
-          enabled: track.enabled,
-          muted: track.muted,
-          readyState: track.readyState
-        })
       })
 
       localStreamRef.current = stream
       setIsMicEnabled(true)
-      console.log('🎤 麦克风已启用，音频轨道数:', stream.getAudioTracks().length)
-
-      // 监听音频轨道的 mute 事件
-      stream.getAudioTracks().forEach(track => {
-        track.onmute = () => {
-          console.warn('⚠️ 音频轨道被静音！', track.label)
-        }
-        track.onunmute = () => {
-          console.log('✅ 音频轨道恢复！', track.label)
-        }
-      })
 
       // 开始监听本地音量
       startVolumeMonitoring(stream, null)
@@ -375,54 +426,31 @@ export default function Home() {
     if (!peerRef.current) return
 
     try {
-      console.log('📞 发起呼叫:', peerId)
-      console.log('📞 本地音频流:', {
-        id: stream.id,
-        active: stream.active,
-        audioTracks: stream.getAudioTracks().length,
-        trackEnabled: stream.getAudioTracks()[0]?.enabled
-      })
-
       const call = peerRef.current.call(peerId, stream)
 
       call.on('stream', (remoteStream) => {
-        console.log('🔊 [呼叫方] 收到对方音频流:', peerId)
         playRemoteAudio(peerId, remoteStream)
       })
 
       call.on('close', () => {
-        console.log('📞 通话结束:', peerId)
         stopRemoteAudio(peerId)
       })
 
       call.on('error', (error) => {
-        console.error('❌ 通话错误:', peerId, error)
+        console.error('通话错误:', peerId, error)
       })
 
       voiceCallsRef.current.set(peerId, call)
-      console.log('✅ 呼叫已发送:', peerId)
     } catch (error) {
-      console.error('❌ 呼叫失败:', peerId, error)
+      console.error('呼叫失败:', peerId, error)
     }
   }
 
   // 播放远程音频
   const playRemoteAudio = (peerId: string, stream: MediaStream) => {
-    // 如果已经有这个音频元素，先移除
     stopRemoteAudio(peerId)
 
-    console.log('🔊 准备播放远程音频:', peerId)
-
     const audioTrack = stream.getAudioTracks()[0]
-    const trackInfo = {
-      id: stream.id,
-      active: stream.active,
-      audioTracks: stream.getAudioTracks().length,
-      trackEnabled: audioTrack?.enabled,
-      trackMuted: audioTrack?.muted,
-      trackReadyState: audioTrack?.readyState
-    }
-    console.log('🔊 音频流信息:', trackInfo)
 
     // 更新玩家麦克风状态
     setPlayerMicStatus(prev => {
@@ -434,14 +462,6 @@ export default function Home() {
       return newMap
     })
 
-    // 检查音频轨道是否被静音
-    if (audioTrack?.muted) {
-      console.warn('⚠️ 警告：对方的音频轨道被静音！可能原因：')
-      console.warn('  1. 对方的麦克风在系统设置中被静音')
-      console.warn('  2. 对方的浏览器没有正确获取麦克风权限')
-      console.warn('  3. 对方的麦克风设备有问题')
-    }
-
     const audio = new Audio()
     audio.srcObject = stream
     audio.autoplay = true
@@ -452,7 +472,6 @@ export default function Home() {
     // 监听远程音频轨道的状态变化
     if (audioTrack) {
       audioTrack.onmute = () => {
-        console.warn('⚠️ 对方音频轨道被静音:', peerId)
         setPlayerMicStatus(prev => {
           const newMap = new Map(prev)
           const current = newMap.get(peerId) || { enabled: false, muted: false }
@@ -461,7 +480,6 @@ export default function Home() {
         })
       }
       audioTrack.onunmute = () => {
-        console.log('✅ 对方音频轨道恢复:', peerId)
         setPlayerMicStatus(prev => {
           const newMap = new Map(prev)
           const current = newMap.get(peerId) || { enabled: false, muted: false }
@@ -470,21 +488,15 @@ export default function Home() {
         })
       }
       audioTrack.onended = () => {
-        console.log('🔇 对方音频轨道结束:', peerId)
         stopRemoteAudio(peerId)
       }
     }
 
     audio.play().then(() => {
-      console.log('✅ 音频播放成功:', peerId)
-      if (!audioTrack?.muted) {
-        console.log('✅ 音频轨道正常，应该能听到声音')
-      }
-
       // 开始监听远程音量
       startVolumeMonitoring(stream, peerId)
     }).catch(error => {
-      console.error('❌ 播放音频失败:', peerId, error)
+      console.error('播放音频失败:', peerId, error)
     })
   }
 
@@ -518,7 +530,6 @@ export default function Home() {
 
     // 离开旧房间
     if (oldRoomId) {
-      // 广播离开消息
       const leaveUpdate: VoiceRoomUpdate = {
         type: 'voice-leave',
         peerId: peerRef.current?.id || '',
@@ -527,14 +538,12 @@ export default function Home() {
       }
       broadcastVoiceUpdate(leaveUpdate)
 
-      // 挂断所有通话
       voiceCallsRef.current.forEach((call, peerId) => {
         call.close()
         stopRemoteAudio(peerId)
       })
       voiceCallsRef.current.clear()
 
-      // 关闭麦克风
       disableMicrophone()
     }
 
@@ -542,28 +551,22 @@ export default function Home() {
 
     // 进入新房间
     if (newRoomId) {
-      // 先检查麦克风权限
+      const { selectedDevice } = await loadAudioDevices()
+
       const permissionState = await checkMicrophonePermission()
 
       if (permissionState === 'denied') {
-        console.error('❌ 麦克风权限已被拒绝')
         alert('麦克风权限已被拒绝\n\n请按以下步骤操作：\n1. 点击地址栏左侧的图标（锁或信息图标）\n2. 找到"麦克风"权限\n3. 设置为"允许"\n4. 刷新页面后重新进入语音室')
         setCurrentVoiceRoom(null)
         return
       }
 
-      // 启用麦克风
-      console.log('🎤 开始启用麦克风...')
-      const stream = await enableMicrophone()
+      const stream = await enableMicrophone(selectedDevice || undefined)
       if (!stream) {
-        console.error('❌ 麦克风启用失败')
         setCurrentVoiceRoom(null)
         return
       }
 
-      console.log('✅ 麦克风启用成功，准备加入语音室:', newRoomId)
-
-      // 广播加入消息
       const joinUpdate: VoiceRoomUpdate = {
         type: 'voice-join',
         peerId: peerRef.current?.id || '',
@@ -572,17 +575,13 @@ export default function Home() {
       }
       broadcastVoiceUpdate(joinUpdate)
 
-      // 呼叫房间内的其他玩家
       const playersInRoom = playersInRooms.get(newRoomId)
       if (playersInRoom && playersInRoom.size > 0) {
-        console.log(`📞 房间内有 ${playersInRoom.size} 个其他玩家，开始呼叫...`)
         playersInRoom.forEach(peerId => {
           if (peerId !== peerRef.current?.id) {
             callPeer(peerId, stream)
           }
         })
-      } else {
-        console.log('📭 房间内暂时没有其他玩家')
       }
     }
   }
@@ -606,7 +605,6 @@ export default function Home() {
     }
     setMyPlayer(player)
     myPlayerRef.current = player
-    console.log('🎮 创建玩家对象:', player)
 
     // 广播加入游戏
     const update: PlayerUpdate = {
@@ -1124,11 +1122,25 @@ export default function Home() {
     remoteAudiosRef.current.clear()
 
     // 清理所有音量监听
-    volumeIntervalsRef.current.forEach((interval) => {
-      clearInterval(interval)
+    audioAnalyzersRef.current.forEach((processor) => {
+      try {
+        processor.disconnect()
+      } catch (e) {}
     })
-    volumeIntervalsRef.current.clear()
     audioAnalyzersRef.current.clear()
+
+    audioSourcesRef.current.forEach((source) => {
+      try {
+        source.disconnect()
+      } catch (e) {}
+    })
+    audioSourcesRef.current.clear()
+
+    // 关闭 AudioContext
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+      audioContextRef.current = null
+    }
 
     disableMicrophone()
 
@@ -1260,6 +1272,69 @@ export default function Home() {
 
             {showVoicePanel && (
               <div className={styles.voicePanelContent}>
+                {/* 麦克风设备选择器 */}
+                <div className={styles.deviceSelector}>
+                  <button
+                    onClick={() => {
+                      loadAudioDevices()
+                      setShowDeviceSelector(!showDeviceSelector)
+                    }}
+                    className={styles.deviceSelectorBtn}
+                  >
+                    🎙️ {(() => {
+                      const currentDevice = audioDevices.find(d => d.deviceId === selectedDeviceId)
+                      if (currentDevice) {
+                        return currentDevice.label || '默认麦克风'
+                      }
+                      return '选择麦克风'
+                    })()}
+                  </button>
+
+                  {showDeviceSelector && (
+                    <div className={styles.deviceList}>
+                      {audioDevices.map(device => (
+                        <div
+                          key={device.deviceId}
+                          className={`${styles.deviceItem} ${selectedDeviceId === device.deviceId ? styles.deviceItemSelected : ''}`}
+                          onClick={async () => {
+                            setSelectedDeviceId(device.deviceId)
+                            setShowDeviceSelector(false)
+
+                            // 如果麦克风已启用，重新启用以使用新设备
+                            if (isMicEnabled && currentVoiceRoom) {
+                              voiceCallsRef.current.forEach((call, peerId) => {
+                                call.close()
+                                stopRemoteAudio(peerId)
+                              })
+                              voiceCallsRef.current.clear()
+
+                              disableMicrophone()
+
+                              setTimeout(async () => {
+                                const stream = await enableMicrophone(device.deviceId)
+
+                                if (stream) {
+                                  const playersInRoom = playersInRooms.get(currentVoiceRoom)
+                                  if (playersInRoom && playersInRoom.size > 0) {
+                                    playersInRoom.forEach(peerId => {
+                                      if (peerId !== peerRef.current?.id) {
+                                        callPeer(peerId, stream)
+                                      }
+                                    })
+                                  }
+                                }
+                              }, 200)
+                            }
+                          }}
+                        >
+                          {selectedDeviceId === device.deviceId && '✓ '}
+                          {device.label || `麦克风 ${device.deviceId.slice(0, 8)}`}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* 我自己 */}
                 <div className={styles.voiceUser}>
                   <div className={styles.voiceUserInfo}>
