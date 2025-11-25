@@ -18,9 +18,10 @@ interface OnlineUser {
   username: string
 }
 
-const SIGNALING_SERVER = 'localhost'
+// 使用当前主机名，支持 localhost 和 IP 访问
+const SIGNALING_SERVER = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
 const SIGNALING_PORT = 9000
-const API_SERVER = 'http://192.168.120.44:3001'
+const API_SERVER = typeof window !== 'undefined' ? `https://${window.location.hostname}:3001` : 'https://localhost:3001'
 
 export default function Home() {
   // 基础状态
