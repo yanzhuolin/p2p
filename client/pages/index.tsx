@@ -46,6 +46,10 @@ export default function Home() {
   const [currentVoiceRoom, setCurrentVoiceRoom] = useState<string | null>(null)
   const [isMicEnabled, setIsMicEnabled] = useState(false)
   const [playersInRooms, setPlayersInRooms] = useState<Map<string, Set<string>>>(new Map())
+  const [playerMicStatus, setPlayerMicStatus] = useState<Map<string, { enabled: boolean, muted: boolean }>>(new Map())
+  const [showVoicePanel, setShowVoicePanel] = useState(true)
+  const [playerVolumes, setPlayerVolumes] = useState<Map<string, number>>(new Map())
+  const [myVolume, setMyVolume] = useState(0)
 
   // Refs
   const peerRef = useRef<Peer | null>(null)
@@ -60,10 +64,88 @@ export default function Home() {
   const localStreamRef = useRef<MediaStream | null>(null)
   const voiceCallsRef = useRef<Map<string, MediaConnection>>(new Map())
   const remoteAudiosRef = useRef<Map<string, HTMLAudioElement>>(new Map())
+  const audioAnalyzersRef = useRef<Map<string, AnalyserNode>>(new Map())
+  const localAnalyzerRef = useRef<AnalyserNode | null>(null)
+  const volumeIntervalsRef = useRef<Map<string, NodeJS.Timeout>>(new Map())
+  const myVolumeIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // 创建音频分析器并开始监听音量
+  const startVolumeMonitoring = (stream: MediaStream, peerId: string | null = null) => {
+    try {
+      const audioContext = new AudioContext()
+      const analyser = audioContext.createAnalyser()
+      analyser.fftSize = 256
+      analyser.smoothingTimeConstant = 0.8
+
+      const source = audioContext.createMediaStreamSource(stream)
+      source.connect(analyser)
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount)
+
+      if (peerId) {
+        // 远程玩家的音量
+        audioAnalyzersRef.current.set(peerId, analyser)
+
+        const interval = setInterval(() => {
+          analyser.getByteFrequencyData(dataArray)
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+          const volume = Math.min(100, Math.round((average / 255) * 100))
+
+          setPlayerVolumes(prev => {
+            const newMap = new Map(prev)
+            newMap.set(peerId, volume)
+            return newMap
+          })
+        }, 100)
+
+        volumeIntervalsRef.current.set(peerId, interval)
+      } else {
+        // 本地玩家的音量
+        localAnalyzerRef.current = analyser
+
+        const interval = setInterval(() => {
+          analyser.getByteFrequencyData(dataArray)
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length
+          const volume = Math.min(100, Math.round((average / 255) * 100))
+          setMyVolume(volume)
+        }, 100)
+
+        myVolumeIntervalRef.current = interval
+      }
+
+      console.log(`🔊 开始监听音量:`, peerId || '本地')
+    } catch (error) {
+      console.error('创建音频分析器失败:', error)
+    }
+  }
+
+  // 停止音量监听
+  const stopVolumeMonitoring = (peerId: string | null = null) => {
+    if (peerId) {
+      const interval = volumeIntervalsRef.current.get(peerId)
+      if (interval) {
+        clearInterval(interval)
+        volumeIntervalsRef.current.delete(peerId)
+      }
+      audioAnalyzersRef.current.delete(peerId)
+      setPlayerVolumes(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(peerId)
+        return newMap
+      })
+    } else {
+      if (myVolumeIntervalRef.current) {
+        clearInterval(myVolumeIntervalRef.current)
+        myVolumeIntervalRef.current = null
+      }
+      localAnalyzerRef.current = null
+      setMyVolume(0)
+    }
   }
 
   useEffect(() => {
@@ -221,9 +303,35 @@ export default function Home() {
         video: false
       })
 
+      // 确保音频轨道未被静音
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = true
+        console.log('🎤 音频轨道状态:', {
+          id: track.id,
+          label: track.label,
+          enabled: track.enabled,
+          muted: track.muted,
+          readyState: track.readyState
+        })
+      })
+
       localStreamRef.current = stream
       setIsMicEnabled(true)
       console.log('🎤 麦克风已启用，音频轨道数:', stream.getAudioTracks().length)
+
+      // 监听音频轨道的 mute 事件
+      stream.getAudioTracks().forEach(track => {
+        track.onmute = () => {
+          console.warn('⚠️ 音频轨道被静音！', track.label)
+        }
+        track.onunmute = () => {
+          console.log('✅ 音频轨道恢复！', track.label)
+        }
+      })
+
+      // 开始监听本地音量
+      startVolumeMonitoring(stream, null)
+
       return stream
     } catch (error: any) {
       console.error('❌ 无法访问麦克风:', error)
@@ -257,6 +365,9 @@ export default function Home() {
       setIsMicEnabled(false)
       console.log('🎤 麦克风已关闭')
     }
+
+    // 停止本地音量监听
+    stopVolumeMonitoring(null)
   }
 
   // 呼叫语音室内的其他玩家
@@ -264,11 +375,18 @@ export default function Home() {
     if (!peerRef.current) return
 
     try {
-      console.log('📞 呼叫:', peerId)
+      console.log('📞 发起呼叫:', peerId)
+      console.log('📞 本地音频流:', {
+        id: stream.id,
+        active: stream.active,
+        audioTracks: stream.getAudioTracks().length,
+        trackEnabled: stream.getAudioTracks()[0]?.enabled
+      })
+
       const call = peerRef.current.call(peerId, stream)
 
       call.on('stream', (remoteStream) => {
-        console.log('🔊 收到音频流:', peerId)
+        console.log('🔊 [呼叫方] 收到对方音频流:', peerId)
         playRemoteAudio(peerId, remoteStream)
       })
 
@@ -282,6 +400,7 @@ export default function Home() {
       })
 
       voiceCallsRef.current.set(peerId, call)
+      console.log('✅ 呼叫已发送:', peerId)
     } catch (error) {
       console.error('❌ 呼叫失败:', peerId, error)
     }
@@ -292,6 +411,37 @@ export default function Home() {
     // 如果已经有这个音频元素，先移除
     stopRemoteAudio(peerId)
 
+    console.log('🔊 准备播放远程音频:', peerId)
+
+    const audioTrack = stream.getAudioTracks()[0]
+    const trackInfo = {
+      id: stream.id,
+      active: stream.active,
+      audioTracks: stream.getAudioTracks().length,
+      trackEnabled: audioTrack?.enabled,
+      trackMuted: audioTrack?.muted,
+      trackReadyState: audioTrack?.readyState
+    }
+    console.log('🔊 音频流信息:', trackInfo)
+
+    // 更新玩家麦克风状态
+    setPlayerMicStatus(prev => {
+      const newMap = new Map(prev)
+      newMap.set(peerId, {
+        enabled: audioTrack?.enabled || false,
+        muted: audioTrack?.muted || false
+      })
+      return newMap
+    })
+
+    // 检查音频轨道是否被静音
+    if (audioTrack?.muted) {
+      console.warn('⚠️ 警告：对方的音频轨道被静音！可能原因：')
+      console.warn('  1. 对方的麦克风在系统设置中被静音')
+      console.warn('  2. 对方的浏览器没有正确获取麦克风权限')
+      console.warn('  3. 对方的麦克风设备有问题')
+    }
+
     const audio = new Audio()
     audio.srcObject = stream
     audio.autoplay = true
@@ -299,7 +449,41 @@ export default function Home() {
 
     remoteAudiosRef.current.set(peerId, audio)
 
-    audio.play().catch(error => {
+    // 监听远程音频轨道的状态变化
+    if (audioTrack) {
+      audioTrack.onmute = () => {
+        console.warn('⚠️ 对方音频轨道被静音:', peerId)
+        setPlayerMicStatus(prev => {
+          const newMap = new Map(prev)
+          const current = newMap.get(peerId) || { enabled: false, muted: false }
+          newMap.set(peerId, { ...current, muted: true })
+          return newMap
+        })
+      }
+      audioTrack.onunmute = () => {
+        console.log('✅ 对方音频轨道恢复:', peerId)
+        setPlayerMicStatus(prev => {
+          const newMap = new Map(prev)
+          const current = newMap.get(peerId) || { enabled: false, muted: false }
+          newMap.set(peerId, { ...current, muted: false })
+          return newMap
+        })
+      }
+      audioTrack.onended = () => {
+        console.log('🔇 对方音频轨道结束:', peerId)
+        stopRemoteAudio(peerId)
+      }
+    }
+
+    audio.play().then(() => {
+      console.log('✅ 音频播放成功:', peerId)
+      if (!audioTrack?.muted) {
+        console.log('✅ 音频轨道正常，应该能听到声音')
+      }
+
+      // 开始监听远程音量
+      startVolumeMonitoring(stream, peerId)
+    }).catch(error => {
       console.error('❌ 播放音频失败:', peerId, error)
     })
   }
@@ -312,6 +496,16 @@ export default function Home() {
       audio.srcObject = null
       remoteAudiosRef.current.delete(peerId)
     }
+
+    // 停止音量监听
+    stopVolumeMonitoring(peerId)
+
+    // 清理麦克风状态
+    setPlayerMicStatus(prev => {
+      const newMap = new Map(prev)
+      newMap.delete(peerId)
+      return newMap
+    })
   }
 
   // 处理语音室变化
@@ -728,14 +922,23 @@ export default function Home() {
 
     // 接收语音呼叫
     peer.on('call', (call) => {
-      console.log('📞 收到语音呼叫:', call.peer)
+      console.log('📞 收到语音呼叫来自:', call.peer)
+      console.log('📞 当前本地音频流状态:', localStreamRef.current ? '已启用' : '未启用')
 
       // 如果有本地音频流，接听
       if (localStreamRef.current) {
+        console.log('📞 接听呼叫，发送本地音频流')
+        console.log('📞 本地音频流:', {
+          id: localStreamRef.current.id,
+          active: localStreamRef.current.active,
+          audioTracks: localStreamRef.current.getAudioTracks().length,
+          trackEnabled: localStreamRef.current.getAudioTracks()[0]?.enabled
+        })
+
         call.answer(localStreamRef.current)
 
         call.on('stream', (remoteStream) => {
-          console.log('🔊 收到音频流:', call.peer)
+          console.log('🔊 [接听方] 收到对方音频流:', call.peer)
           playRemoteAudio(call.peer, remoteStream)
         })
 
@@ -744,7 +947,12 @@ export default function Home() {
           stopRemoteAudio(call.peer)
         })
 
+        call.on('error', (error) => {
+          console.error('❌ [接听方] 通话错误:', call.peer, error)
+        })
+
         voiceCallsRef.current.set(call.peer, call)
+        console.log('✅ 已接听呼叫:', call.peer)
       } else {
         console.log('⚠️ 没有本地音频流，拒绝呼叫')
         call.close()
@@ -915,6 +1123,13 @@ export default function Home() {
     })
     remoteAudiosRef.current.clear()
 
+    // 清理所有音量监听
+    volumeIntervalsRef.current.forEach((interval) => {
+      clearInterval(interval)
+    })
+    volumeIntervalsRef.current.clear()
+    audioAnalyzersRef.current.clear()
+
     disableMicrophone()
 
     connectionsRef.current.forEach((conn) => {
@@ -1029,6 +1244,92 @@ export default function Home() {
             />
           )}
         </div>
+
+        {/* 语音室面板 */}
+        {currentVoiceRoom && (
+          <div className={`${styles.voicePanel} ${showVoicePanel ? styles.voicePanelVisible : styles.voicePanelHidden}`}>
+            <div className={styles.voicePanelHeader}>
+              <h3>🎤 语音室 {currentVoiceRoom}</h3>
+              <button
+                onClick={() => setShowVoicePanel(!showVoicePanel)}
+                className={styles.toggleVoiceBtn}
+              >
+                {showVoicePanel ? '▼' : '▲'}
+              </button>
+            </div>
+
+            {showVoicePanel && (
+              <div className={styles.voicePanelContent}>
+                {/* 我自己 */}
+                <div className={styles.voiceUser}>
+                  <div className={styles.voiceUserInfo}>
+                    <span className={styles.voiceUserName}>
+                      👤 {username} (你)
+                    </span>
+                    <span className={styles.voiceMicStatus}>
+                      {isMicEnabled ? '🎤 开启' : '🔇 关闭'}
+                    </span>
+                  </div>
+                  {isMicEnabled && (
+                    <div className={styles.volumeBar}>
+                      <div
+                        className={styles.volumeLevel}
+                        style={{ width: `${myVolume}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* 房间内的其他玩家 */}
+                {Array.from(playersInRooms.get(currentVoiceRoom) || [])
+                  .filter(peerId => peerId !== myPeerId)
+                  .map(peerId => {
+                    const player = otherPlayers.get(peerId)
+                    const micStatus = playerMicStatus.get(peerId)
+                    const volume = playerVolumes.get(peerId) || 0
+
+                    return (
+                      <div key={peerId} className={styles.voiceUser}>
+                        <div className={styles.voiceUserInfo}>
+                          <span className={styles.voiceUserName}>
+                            {player?.character.emoji || '👤'} {player?.username || '未知玩家'}
+                          </span>
+                          <span className={styles.voiceMicStatus}>
+                            {!micStatus ? (
+                              <span className={styles.micConnecting}>⏳ 连接中...</span>
+                            ) : micStatus.muted ? (
+                              <span className={styles.micMuted}>🔇 静音</span>
+                            ) : micStatus.enabled ? (
+                              <span className={styles.micActive}>🎤 正常</span>
+                            ) : (
+                              <span className={styles.micDisabled}>🔇 关闭</span>
+                            )}
+                          </span>
+                        </div>
+                        {micStatus && micStatus.enabled && !micStatus.muted && (
+                          <div className={styles.volumeBar}>
+                            <div
+                              className={styles.volumeLevel}
+                              style={{ width: `${volume}%` }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+
+                {/* 如果房间里只有自己 */}
+                {(!playersInRooms.get(currentVoiceRoom) ||
+                  playersInRooms.get(currentVoiceRoom)!.size <= 1) && (
+                  <div className={styles.emptyVoiceRoom}>
+                    <p>📭 房间里只有你一个人</p>
+                    <p>等待其他玩家加入...</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 聊天面板 */}
         <div className={`${styles.chatPanel} ${showChat ? styles.chatVisible : styles.chatHidden}`}>

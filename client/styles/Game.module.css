@@ -1,3 +1,155 @@
+/* 语音室面板 */
+.voicePanel {
+  position: fixed;
+  top: 80px;
+  left: 20px;
+  width: 280px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+  transition: all 0.3s ease;
+  z-index: 100;
+}
+
+.voicePanelVisible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.voicePanelHidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.voicePanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  cursor: pointer;
+}
+
+.voicePanelHeader h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.toggleVoiceBtn {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.toggleVoiceBtn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.voicePanelContent {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.voiceUser {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.voiceUserInfo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.voiceUserName {
+  font-size: 14px;
+  font-weight: 500;
+  color: #374151;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voiceMicStatus {
+  font-size: 13px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.volumeBar {
+  width: 100%;
+  height: 4px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.volumeLevel {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981 0%, #34d399 50%, #fbbf24 75%, #ef4444 100%);
+  border-radius: 2px;
+  transition: width 0.1s ease-out;
+  min-width: 2px;
+}
+
+.micActive {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.micMuted {
+  color: #ef4444;
+  font-weight: 600;
+}
+
+.micDisabled {
+  color: #9ca3af;
+  font-weight: 600;
+}
+
+.micConnecting {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.emptyVoiceRoom {
+  text-align: center;
+  padding: 20px;
+  color: #9ca3af;
+}
+
+.emptyVoiceRoom p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.emptyVoiceRoom p:first-child {
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
 /* 登录界面 */
 .loginContainer {
   min-height: 100vh;

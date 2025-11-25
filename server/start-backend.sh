@@ -27,6 +27,5 @@ echo "🚀 启动后端服务器..."
 echo ""
 
 # 进入 server 目录并启动
-cd server
 node server-https.js
 
