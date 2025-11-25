@@ -181,9 +181,36 @@ export default function Home() {
     broadcastGameUpdate(update)
   }
 
+  // 检查麦克风权限状态
+  const checkMicrophonePermission = async () => {
+    try {
+      // 某些浏览器不支持 permissions API
+      if (!navigator.permissions || !navigator.permissions.query) {
+        console.log('⚠️ 浏览器不支持 Permissions API，将直接请求麦克风')
+        return 'prompt'
+      }
+
+      const result = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+      console.log('🎤 麦克风权限状态:', result.state)
+      return result.state // 'granted', 'denied', 'prompt'
+    } catch (error) {
+      console.log('⚠️ 无法查询麦克风权限，将直接请求:', error)
+      return 'prompt'
+    }
+  }
+
   // 获取麦克风权限并创建音频流
   const enableMicrophone = async () => {
     try {
+      // 检查浏览器是否支持 getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error('❌ 浏览器不支持 getUserMedia')
+        alert('您的浏览器不支持语音功能，请使用最新版本的 Chrome、Edge 或 Firefox')
+        return null
+      }
+
+      console.log('🎤 正在请求麦克风权限...')
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -192,13 +219,31 @@ export default function Home() {
         },
         video: false
       })
+
       localStreamRef.current = stream
       setIsMicEnabled(true)
-      console.log('🎤 麦克风已启用')
+      console.log('🎤 麦克风已启用，音频轨道数:', stream.getAudioTracks().length)
       return stream
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ 无法访问麦克风:', error)
-      alert('无法访问麦克风，请检查浏览器权限设置')
+
+      let errorMessage = '无法访问麦克风'
+
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        errorMessage = '麦克风权限被拒绝\n\n请按以下步骤操作：\n1. 点击地址栏左侧的锁图标\n2. 找到"麦克风"权限\n3. 设置为"允许"\n4. 刷新页面后重新进入语音室'
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        errorMessage = '未找到麦克风设备\n\n请检查：\n1. 麦克风是否已连接\n2. 系统设置中麦克风是否可用\n3. 其他应用是否占用了麦克风'
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        errorMessage = '无法读取麦克风\n\n可能原因：\n1. 麦克风被其他应用占用\n2. 麦克风硬件故障\n3. 请关闭其他使用麦克风的应用后重试'
+      } else if (error.name === 'OverconstrainedError') {
+        errorMessage = '麦克风不支持请求的配置\n\n请尝试使用其他麦克风设备'
+      } else if (error.name === 'SecurityError') {
+        errorMessage = '安全错误\n\n请确保：\n1. 使用 HTTPS 或 localhost\n2. 浏览器版本是最新的'
+      } else {
+        errorMessage = `未知错误: ${error.message || error.name}\n\n请检查浏览器控制台获取更多信息`
+      }
+
+      alert(errorMessage)
       return null
     }
   }
@@ -302,12 +347,26 @@ export default function Home() {
 
     // 进入新房间
     if (newRoomId) {
-      // 启用麦克风
-      const stream = await enableMicrophone()
-      if (!stream) {
+      // 先检查麦克风权限
+      const permissionState = await checkMicrophonePermission()
+
+      if (permissionState === 'denied') {
+        console.error('❌ 麦克风权限已被拒绝')
+        alert('麦克风权限已被拒绝\n\n请按以下步骤操作：\n1. 点击地址栏左侧的图标（锁或信息图标）\n2. 找到"麦克风"权限\n3. 设置为"允许"\n4. 刷新页面后重新进入语音室')
         setCurrentVoiceRoom(null)
         return
       }
+
+      // 启用麦克风
+      console.log('🎤 开始启用麦克风...')
+      const stream = await enableMicrophone()
+      if (!stream) {
+        console.error('❌ 麦克风启用失败')
+        setCurrentVoiceRoom(null)
+        return
+      }
+
+      console.log('✅ 麦克风启用成功，准备加入语音室:', newRoomId)
 
       // 广播加入消息
       const joinUpdate: VoiceRoomUpdate = {
@@ -320,12 +379,15 @@ export default function Home() {
 
       // 呼叫房间内的其他玩家
       const playersInRoom = playersInRooms.get(newRoomId)
-      if (playersInRoom) {
+      if (playersInRoom && playersInRoom.size > 0) {
+        console.log(`📞 房间内有 ${playersInRoom.size} 个其他玩家，开始呼叫...`)
         playersInRoom.forEach(peerId => {
           if (peerId !== peerRef.current?.id) {
             callPeer(peerId, stream)
           }
         })
+      } else {
+        console.log('📭 房间内暂时没有其他玩家')
       }
     }
   }
