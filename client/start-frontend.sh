@@ -25,6 +25,6 @@ echo ""
 echo "🚀 启动前端服务器..."
 echo ""
 
-# 在根目录启动（因为 server-https.js 在根目录）
+# 在 client 目录启动（使用 client/server-https.js）
 node server-https.js
 
