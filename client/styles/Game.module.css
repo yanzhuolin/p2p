@@ -333,6 +333,20 @@
   padding: 5px 15px;
   background: #f3f4f6;
   border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.character:hover {
+  background: #e5e7eb;
+  color: #374151;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.character:active {
+  transform: translateY(0);
 }
 
 .stats {

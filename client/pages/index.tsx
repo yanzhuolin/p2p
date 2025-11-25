@@ -585,22 +585,25 @@ export default function Home() {
     setSelectedCharacter(character)
     setShowCharacterSelect(false)
 
+    // 如果已经有玩家对象，保持当前位置；否则使用默认位置
+    const currentPosition = myPlayerRef.current?.position || {
+      x: GAME_CONFIG.CANVAS_WIDTH / 2,
+      y: GAME_CONFIG.CANVAS_HEIGHT / 2
+    }
+
     // 创建玩家对象
     const player: Player = {
       peerId: peerRef.current?.id || '',
       username,
       character,
-      position: {
-        x: GAME_CONFIG.CANVAS_WIDTH / 2,
-        y: GAME_CONFIG.CANVAS_HEIGHT / 2
-      },
+      position: currentPosition,
       velocity: { x: 0, y: 0 },
       lastUpdate: Date.now()
     }
     setMyPlayer(player)
     myPlayerRef.current = player
 
-    // 广播加入游戏
+    // 广播加入游戏（重新选择角色时也广播，让其他玩家看到新角色）
     const update: PlayerUpdate = {
       type: 'join',
       peerId: player.peerId,
@@ -1206,7 +1209,11 @@ export default function Home() {
         <div className={styles.userInfo}>
           <span className={styles.username}>👤 {username}</span>
           {selectedCharacter && (
-            <span className={styles.character}>
+            <span
+              className={styles.character}
+              onClick={() => setShowCharacterSelect(true)}
+              title="点击重新选择角色"
+            >
               {selectedCharacter.emoji} {selectedCharacter.name}
             </span>
           )}
