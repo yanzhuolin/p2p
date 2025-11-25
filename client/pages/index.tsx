@@ -17,6 +17,11 @@ const SIGNALING_SERVER = typeof window !== 'undefined' ? window.location.hostnam
 const SIGNALING_PORT = 9000
 const API_SERVER = typeof window !== 'undefined' ? `https://${window.location.hostname}:3001` : 'https://localhost:3001'
 
+const STORAGE_KEYS = {
+  USERNAME: 'p2p-game-username',
+  CHARACTER: 'p2p-game-character'
+}
+
 export default function Home() {
   // 基础状态
   const [username, setUsername] = useState('')
@@ -181,6 +186,30 @@ export default function Home() {
   }
 
 
+
+  // 初始化时从 localStorage 加载用户名和角色
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedUsername = localStorage.getItem(STORAGE_KEYS.USERNAME)
+      const savedCharacterStr = localStorage.getItem(STORAGE_KEYS.CHARACTER)
+
+      if (savedUsername) {
+        setUsername(savedUsername)
+      }
+
+      if (savedCharacterStr) {
+        try {
+          const savedCharacter = JSON.parse(savedCharacterStr)
+          const validCharacter = CHARACTERS.find(c => c.id === savedCharacter.id)
+          if (validCharacter) {
+            setSelectedCharacter(validCharacter)
+          }
+        } catch (e) {
+          console.error('加载角色失败:', e)
+        }
+      }
+    }
+  }, [])
 
   // 页面刷新/关闭时清理
   useEffect(() => {
@@ -585,6 +614,11 @@ export default function Home() {
     setSelectedCharacter(character)
     setShowCharacterSelect(false)
 
+    // 保存角色到 localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.CHARACTER, JSON.stringify(character))
+    }
+
     // 如果已经有玩家对象，保持当前位置；否则使用默认位置
     const currentPosition = myPlayerRef.current?.position || {
       x: GAME_CONFIG.CANVAS_WIDTH / 2,
@@ -855,11 +889,18 @@ export default function Home() {
     }
   }
 
+
+
   // 连接到服务器
   const connect = async () => {
     if (!username.trim()) {
       alert('请输入用户名')
       return
+    }
+
+    // 保存用户名到 localStorage
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.USERNAME, username)
     }
 
     const peer = new Peer({
@@ -906,58 +947,65 @@ export default function Home() {
       }
       userListIntervalRef.current = setInterval(fetchOnlineUsers, 3000)
 
-      // 显示角色选择
-      setShowCharacterSelect(true)
+      // 如果已经有选中的角色，自动创建玩家；否则显示角色选择
+      if (selectedCharacter) {
+        const player: Player = {
+          peerId: id,
+          username,
+          character: selectedCharacter,
+          position: {
+            x: GAME_CONFIG.CANVAS_WIDTH / 2,
+            y: GAME_CONFIG.CANVAS_HEIGHT / 2
+          },
+          velocity: { x: 0, y: 0 },
+          lastUpdate: Date.now()
+        }
+        setMyPlayer(player)
+        myPlayerRef.current = player
+
+        // 广播加入游戏
+        const update: PlayerUpdate = {
+          type: 'join',
+          peerId: player.peerId,
+          username: player.username,
+          character: player.character,
+          position: player.position,
+          timestamp: Date.now()
+        }
+        broadcastGameUpdate(update)
+      } else {
+        setShowCharacterSelect(true)
+      }
     })
 
     // 接收语音呼叫
     peer.on('call', (call) => {
-      console.log('📞 收到语音呼叫来自:', call.peer)
-      console.log('📞 当前本地音频流状态:', localStreamRef.current ? '已启用' : '未启用')
-
-      // 如果有本地音频流，接听
       if (localStreamRef.current) {
-        console.log('📞 接听呼叫，发送本地音频流')
-        console.log('📞 本地音频流:', {
-          id: localStreamRef.current.id,
-          active: localStreamRef.current.active,
-          audioTracks: localStreamRef.current.getAudioTracks().length,
-          trackEnabled: localStreamRef.current.getAudioTracks()[0]?.enabled
-        })
-
         call.answer(localStreamRef.current)
 
         call.on('stream', (remoteStream) => {
-          console.log('🔊 [接听方] 收到对方音频流:', call.peer)
           playRemoteAudio(call.peer, remoteStream)
         })
 
         call.on('close', () => {
-          console.log('📞 通话结束:', call.peer)
           stopRemoteAudio(call.peer)
         })
 
         call.on('error', (error) => {
-          console.error('❌ [接听方] 通话错误:', call.peer, error)
+          console.error('通话错误:', call.peer, error)
         })
 
         voiceCallsRef.current.set(call.peer, call)
-        console.log('✅ 已接听呼叫:', call.peer)
       } else {
-        console.log('⚠️ 没有本地音频流，拒绝呼叫')
         call.close()
       }
     })
 
     peer.on('connection', (conn) => {
-      console.log('📥 收到连接请求:', conn.peer)
-
       conn.on('open', () => {
-        console.log('✅ 接受连接:', conn.peer)
         connectionsRef.current.set(conn.peer, conn)
         setConnections(new Map(connectionsRef.current))
 
-        // 如果已经选择了角色，发送加入消息
         if (myPlayerRef.current) {
           const update: PlayerUpdate = {
             type: 'join',
@@ -967,10 +1015,8 @@ export default function Home() {
             position: myPlayerRef.current.position,
             timestamp: Date.now()
           }
-          console.log('📤 发送我的状态给新连接:', conn.peer, update)
           conn.send(JSON.stringify(update))
 
-          // 如果我在语音室内，也发送语音室状态
           if (currentVoiceRoom) {
             const voiceUpdate: VoiceRoomUpdate = {
               type: 'voice-join',
@@ -980,8 +1026,6 @@ export default function Home() {
             }
             conn.send(JSON.stringify(voiceUpdate))
           }
-        } else {
-          console.log('⚠️ 接受连接但还没有选择角色')
         }
       })
 
@@ -990,46 +1034,31 @@ export default function Home() {
       })
 
       conn.on('close', () => {
-        console.log('❌ 连接关闭:', conn.peer)
         connectionsRef.current.delete(conn.peer)
         setConnections(new Map(connectionsRef.current))
-
-        // 移除该玩家
         setOtherPlayers(prev => {
           const newMap = new Map(prev)
           newMap.delete(conn.peer)
           return newMap
         })
-
-        // 清理语音通话
-        const call = voiceCallsRef.current.get(conn.peer)
-        if (call) {
-          call.close()
-          voiceCallsRef.current.delete(conn.peer)
-        }
-        stopRemoteAudio(conn.peer)
       })
 
       conn.on('error', (err) => {
-        console.error('连接错误:', err)
+        console.error('连接错误:', conn.peer, err)
       })
     })
 
-    peer.on('disconnected', () => {
-      console.log('🔄 与信令服务器断开，尝试重连...')
-      if (!peer.destroyed) {
-        peer.reconnect()
-      }
-    })
-
     peer.on('error', (err) => {
-      const errorType = (err as any).type
-      if (errorType === 'unavailable-id' || errorType === 'server-error') {
-        console.error('❌ Peer错误:', err)
+      console.error('Peer错误:', err)
+      if (err.type === 'peer-unavailable') {
+        console.log('对方不在线')
+      } else {
         alert(`连接错误: ${err.message}`)
       }
     })
   }
+
+
 
   // 发送消息
   const sendMessage = (text: string) => {
