@@ -530,21 +530,6 @@ export default function Home() {
 
     // 离开旧房间
     if (oldRoomId) {
-      // 把自己从房间列表中移除
-      setPlayersInRooms(prev => {
-        const newMap = new Map(prev)
-        const roomPlayers = newMap.get(oldRoomId)
-        if (roomPlayers) {
-          roomPlayers.delete(peerRef.current?.id || '')
-          if (roomPlayers.size === 0) {
-            newMap.delete(oldRoomId)
-          } else {
-            newMap.set(oldRoomId, roomPlayers)
-          }
-        }
-        return newMap
-      })
-
       const leaveUpdate: VoiceRoomUpdate = {
         type: 'voice-leave',
         peerId: peerRef.current?.id || '',
