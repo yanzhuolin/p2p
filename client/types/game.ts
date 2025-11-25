@@ -102,6 +102,27 @@ export const CHARACTERS: Character[] = [
   }
 ]
 
+// 语音室类型
+export interface VoiceRoom {
+  id: string
+  name: string
+  x: number
+  y: number
+  width: number
+  height: number
+  color: string
+  borderColor: string
+  maxPlayers?: number
+}
+
+// 语音室更新消息
+export interface VoiceRoomUpdate {
+  type: 'voice-join' | 'voice-leave'
+  peerId: string
+  roomId: string
+  timestamp: number
+}
+
 // 游戏配置
 export const GAME_CONFIG = {
   CANVAS_WIDTH: 800,
@@ -113,4 +134,48 @@ export const GAME_CONFIG = {
   MAP_GRID_SIZE: 50,
   COLLISION_ENABLED: true
 }
+
+// 预定义的语音室
+export const VOICE_ROOMS: VoiceRoom[] = [
+  {
+    id: 'room1',
+    name: '🎤 语音室 1',
+    x: 50,
+    y: 50,
+    width: 200,
+    height: 150,
+    color: 'rgba(59, 130, 246, 0.2)', // 蓝色
+    borderColor: '#3b82f6',
+  },
+  {
+    id: 'room2',
+    name: '🎵 语音室 2',
+    x: 550,
+    y: 50,
+    width: 200,
+    height: 150,
+    color: 'rgba(139, 92, 246, 0.2)', // 紫色
+    borderColor: '#8b5cf6',
+  },
+  {
+    id: 'room3',
+    name: '🎧 语音室 3',
+    x: 50,
+    y: 400,
+    width: 200,
+    height: 150,
+    color: 'rgba(16, 185, 129, 0.2)', // 绿色
+    borderColor: '#10b981',
+  },
+  {
+    id: 'room4',
+    name: '🔊 语音室 4',
+    x: 550,
+    y: 400,
+    width: 200,
+    height: 150,
+    color: 'rgba(245, 158, 11, 0.2)', // 橙色
+    borderColor: '#f59e0b',
+  },
+]
 

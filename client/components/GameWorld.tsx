@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from 'react'
-import { Player, Position, GAME_CONFIG } from '../types/game'
+import { Player, Position, GAME_CONFIG, VOICE_ROOMS, VoiceRoom } from '../types/game'
 
 interface GameWorldProps {
   myPlayer: Player
   otherPlayers: Map<string, Player>
   onPositionUpdate: (position: Position, velocity: { x: number; y: number }) => void
+  onVoiceRoomChange?: (roomId: string | null) => void
+  currentVoiceRoom?: string | null
+  playersInRooms?: Map<string, Set<string>> // roomId -> Set of peerIds
 }
 
-export default function GameWorld({ myPlayer, otherPlayers, onPositionUpdate }: GameWorldProps) {
+export default function GameWorld({
+  myPlayer,
+  otherPlayers,
+  onPositionUpdate,
+  onVoiceRoomChange,
+  currentVoiceRoom,
+  playersInRooms = new Map()
+}: GameWorldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number>()
   const keysPressed = useRef<Set<string>>(new Set())
@@ -18,6 +28,21 @@ export default function GameWorld({ myPlayer, otherPlayers, onPositionUpdate }: 
   // 玩家位置状态
   const playerPosition = useRef<Position>(myPlayer.position)
   const playerVelocity = useRef({ x: 0, y: 0 })
+
+  // 检测玩家是否在语音室内
+  const checkVoiceRoom = (position: Position): string | null => {
+    for (const room of VOICE_ROOMS) {
+      if (
+        position.x >= room.x &&
+        position.x <= room.x + room.width &&
+        position.y >= room.y &&
+        position.y <= room.y + room.height
+      ) {
+        return room.id
+      }
+    }
+    return null
+  }
 
   // 键盘控制
   useEffect(() => {
@@ -80,6 +105,12 @@ export default function GameWorld({ myPlayer, otherPlayers, onPositionUpdate }: 
 
     playerPosition.current = { x: clampedX, y: clampedY }
 
+    // 检测语音室变化
+    const newRoom = checkVoiceRoom(playerPosition.current)
+    if (newRoom !== currentVoiceRoom && onVoiceRoomChange) {
+      onVoiceRoomChange(newRoom)
+    }
+
     // 如果位置或速度有变化，通知父组件
     if (playerVelocity.current.x !== 0 || playerVelocity.current.y !== 0) {
       onPositionUpdate(playerPosition.current, playerVelocity.current)
@@ -139,6 +170,35 @@ export default function GameWorld({ myPlayer, otherPlayers, onPositionUpdate }: 
     }
   }
 
+  // 绘制语音室
+  const drawVoiceRooms = (ctx: CanvasRenderingContext2D) => {
+    VOICE_ROOMS.forEach(room => {
+      // 绘制房间背景
+      ctx.fillStyle = room.color
+      ctx.fillRect(room.x, room.y, room.width, room.height)
+
+      // 绘制房间边框
+      ctx.strokeStyle = room.borderColor
+      ctx.lineWidth = currentVoiceRoom === room.id ? 4 : 2
+      ctx.strokeRect(room.x, room.y, room.width, room.height)
+
+      // 绘制房间名称
+      ctx.fillStyle = room.borderColor
+      ctx.font = 'bold 16px Arial'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'top'
+      ctx.fillText(room.name, room.x + room.width / 2, room.y + 10)
+
+      // 显示房间内的玩家数量
+      const playersInRoom = playersInRooms.get(room.id)
+      const playerCount = playersInRoom ? playersInRoom.size : 0
+      if (playerCount > 0) {
+        ctx.font = '14px Arial'
+        ctx.fillText(`👥 ${playerCount} 人`, room.x + room.width / 2, room.y + 35)
+      }
+    })
+  }
+
   // 绘制网格背景
   const drawGrid = (ctx: CanvasRenderingContext2D) => {
     const gridSize = GAME_CONFIG.MAP_GRID_SIZE
@@ -176,6 +236,9 @@ export default function GameWorld({ myPlayer, otherPlayers, onPositionUpdate }: 
 
     // 绘制网格
     drawGrid(ctx)
+
+    // 绘制语音室
+    drawVoiceRooms(ctx)
 
     // 更新并绘制自己的玩家
     updatePosition()

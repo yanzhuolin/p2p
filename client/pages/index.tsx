@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import Peer, { DataConnection } from 'peerjs'
+import Peer, { DataConnection, MediaConnection } from 'peerjs'
 import GameWorld from '../components/GameWorld'
 import CharacterSelect from '../components/CharacterSelect'
-import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS } from '../types/game'
+import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '../types/game'
 import styles from '../styles/Game.module.css'
 
 interface Message {
@@ -41,6 +41,11 @@ export default function Home() {
   const [connections, setConnections] = useState<Map<string, DataConnection>>(new Map())
   const [showChat, setShowChat] = useState(true)
 
+  // 语音状态
+  const [currentVoiceRoom, setCurrentVoiceRoom] = useState<string | null>(null)
+  const [isMicEnabled, setIsMicEnabled] = useState(false)
+  const [playersInRooms, setPlayersInRooms] = useState<Map<string, Set<string>>>(new Map())
+
   // Refs
   const peerRef = useRef<Peer | null>(null)
   const connectionsRef = useRef<Map<string, DataConnection>>(new Map())
@@ -49,6 +54,11 @@ export default function Home() {
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const myPlayerRef = useRef<Player | null>(null)
+
+  // 语音相关 Refs
+  const localStreamRef = useRef<MediaStream | null>(null)
+  const voiceCallsRef = useRef<Map<string, MediaConnection>>(new Map())
+  const remoteAudiosRef = useRef<Map<string, HTMLAudioElement>>(new Map())
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
@@ -135,6 +145,20 @@ export default function Home() {
     })
   }
 
+  // 广播语音室更新
+  const broadcastVoiceUpdate = (update: VoiceRoomUpdate) => {
+    const message = JSON.stringify(update)
+    connectionsRef.current.forEach((conn, peerId) => {
+      if (conn.open) {
+        try {
+          conn.send(message)
+        } catch (error) {
+          console.error(`发送语音更新失败 (${peerId}):`, error)
+        }
+      }
+    })
+  }
+
   // 处理位置更新
   const handlePositionUpdate = (position: Position, velocity: { x: number; y: number }) => {
     if (!myPlayer) return
@@ -155,6 +179,155 @@ export default function Home() {
       timestamp: Date.now()
     }
     broadcastGameUpdate(update)
+  }
+
+  // 获取麦克风权限并创建音频流
+  const enableMicrophone = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        },
+        video: false
+      })
+      localStreamRef.current = stream
+      setIsMicEnabled(true)
+      console.log('🎤 麦克风已启用')
+      return stream
+    } catch (error) {
+      console.error('❌ 无法访问麦克风:', error)
+      alert('无法访问麦克风，请检查浏览器权限设置')
+      return null
+    }
+  }
+
+  // 关闭麦克风
+  const disableMicrophone = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop())
+      localStreamRef.current = null
+      setIsMicEnabled(false)
+      console.log('🎤 麦克风已关闭')
+    }
+  }
+
+  // 呼叫语音室内的其他玩家
+  const callPeer = async (peerId: string, stream: MediaStream) => {
+    if (!peerRef.current) return
+
+    try {
+      console.log('📞 呼叫:', peerId)
+      const call = peerRef.current.call(peerId, stream)
+
+      call.on('stream', (remoteStream) => {
+        console.log('🔊 收到音频流:', peerId)
+        playRemoteAudio(peerId, remoteStream)
+      })
+
+      call.on('close', () => {
+        console.log('📞 通话结束:', peerId)
+        stopRemoteAudio(peerId)
+      })
+
+      call.on('error', (error) => {
+        console.error('❌ 通话错误:', peerId, error)
+      })
+
+      voiceCallsRef.current.set(peerId, call)
+    } catch (error) {
+      console.error('❌ 呼叫失败:', peerId, error)
+    }
+  }
+
+  // 播放远程音频
+  const playRemoteAudio = (peerId: string, stream: MediaStream) => {
+    // 如果已经有这个音频元素，先移除
+    stopRemoteAudio(peerId)
+
+    const audio = new Audio()
+    audio.srcObject = stream
+    audio.autoplay = true
+    audio.volume = 1.0
+
+    remoteAudiosRef.current.set(peerId, audio)
+
+    audio.play().catch(error => {
+      console.error('❌ 播放音频失败:', peerId, error)
+    })
+  }
+
+  // 停止播放远程音频
+  const stopRemoteAudio = (peerId: string) => {
+    const audio = remoteAudiosRef.current.get(peerId)
+    if (audio) {
+      audio.pause()
+      audio.srcObject = null
+      remoteAudiosRef.current.delete(peerId)
+    }
+  }
+
+  // 处理语音室变化
+  const handleVoiceRoomChange = async (newRoomId: string | null) => {
+    const oldRoomId = currentVoiceRoom
+
+    if (oldRoomId === newRoomId) return
+
+    console.log('🚪 语音室变化:', oldRoomId, '->', newRoomId)
+
+    // 离开旧房间
+    if (oldRoomId) {
+      // 广播离开消息
+      const leaveUpdate: VoiceRoomUpdate = {
+        type: 'voice-leave',
+        peerId: peerRef.current?.id || '',
+        roomId: oldRoomId,
+        timestamp: Date.now()
+      }
+      broadcastVoiceUpdate(leaveUpdate)
+
+      // 挂断所有通话
+      voiceCallsRef.current.forEach((call, peerId) => {
+        call.close()
+        stopRemoteAudio(peerId)
+      })
+      voiceCallsRef.current.clear()
+
+      // 关闭麦克风
+      disableMicrophone()
+    }
+
+    setCurrentVoiceRoom(newRoomId)
+
+    // 进入新房间
+    if (newRoomId) {
+      // 启用麦克风
+      const stream = await enableMicrophone()
+      if (!stream) {
+        setCurrentVoiceRoom(null)
+        return
+      }
+
+      // 广播加入消息
+      const joinUpdate: VoiceRoomUpdate = {
+        type: 'voice-join',
+        peerId: peerRef.current?.id || '',
+        roomId: newRoomId,
+        timestamp: Date.now()
+      }
+      broadcastVoiceUpdate(joinUpdate)
+
+      // 呼叫房间内的其他玩家
+      const playersInRoom = playersInRooms.get(newRoomId)
+      if (playersInRoom) {
+        playersInRoom.forEach(peerId => {
+          if (peerId !== peerRef.current?.id) {
+            callPeer(peerId, stream)
+          }
+        })
+      }
+    }
   }
 
   // 处理角色选择
@@ -309,8 +482,12 @@ export default function Home() {
       const parsed = typeof data === 'string' ? JSON.parse(data) : data
 
       // 游戏更新
-      if (parsed.type) {
+      if (parsed.type && (parsed.type === 'join' || parsed.type === 'position' || parsed.type === 'leave')) {
         handleGameUpdate(parsed as PlayerUpdate, fromPeerId)
+      }
+      // 语音室更新
+      else if (parsed.type && (parsed.type === 'voice-join' || parsed.type === 'voice-leave')) {
+        handleVoiceUpdate(parsed as VoiceRoomUpdate, fromPeerId)
       }
       // 聊天消息
       else if (parsed.text) {
@@ -331,6 +508,50 @@ export default function Home() {
       }
     } catch (error) {
       console.error('处理数据失败:', error)
+    }
+  }
+
+  // 处理语音室更新
+  const handleVoiceUpdate = async (update: VoiceRoomUpdate, fromPeerId: string) => {
+    console.log('🎤 收到语音更新:', update.type, 'from', fromPeerId, 'room', update.roomId)
+
+    if (update.type === 'voice-join') {
+      // 更新房间内玩家列表
+      setPlayersInRooms(prev => {
+        const newMap = new Map(prev)
+        const roomPlayers = newMap.get(update.roomId) || new Set()
+        roomPlayers.add(fromPeerId)
+        newMap.set(update.roomId, roomPlayers)
+        return newMap
+      })
+
+      // 如果我也在同一个房间，呼叫这个玩家
+      if (currentVoiceRoom === update.roomId && localStreamRef.current) {
+        callPeer(fromPeerId, localStreamRef.current)
+      }
+    } else if (update.type === 'voice-leave') {
+      // 更新房间内玩家列表
+      setPlayersInRooms(prev => {
+        const newMap = new Map(prev)
+        const roomPlayers = newMap.get(update.roomId)
+        if (roomPlayers) {
+          roomPlayers.delete(fromPeerId)
+          if (roomPlayers.size === 0) {
+            newMap.delete(update.roomId)
+          } else {
+            newMap.set(update.roomId, roomPlayers)
+          }
+        }
+        return newMap
+      })
+
+      // 挂断与这个玩家的通话
+      const call = voiceCallsRef.current.get(fromPeerId)
+      if (call) {
+        call.close()
+        voiceCallsRef.current.delete(fromPeerId)
+      }
+      stopRemoteAudio(fromPeerId)
     }
   }
 
@@ -442,6 +663,31 @@ export default function Home() {
       setShowCharacterSelect(true)
     })
 
+    // 接收语音呼叫
+    peer.on('call', (call) => {
+      console.log('📞 收到语音呼叫:', call.peer)
+
+      // 如果有本地音频流，接听
+      if (localStreamRef.current) {
+        call.answer(localStreamRef.current)
+
+        call.on('stream', (remoteStream) => {
+          console.log('🔊 收到音频流:', call.peer)
+          playRemoteAudio(call.peer, remoteStream)
+        })
+
+        call.on('close', () => {
+          console.log('📞 通话结束:', call.peer)
+          stopRemoteAudio(call.peer)
+        })
+
+        voiceCallsRef.current.set(call.peer, call)
+      } else {
+        console.log('⚠️ 没有本地音频流，拒绝呼叫')
+        call.close()
+      }
+    })
+
     peer.on('connection', (conn) => {
       console.log('📥 收到连接请求:', conn.peer)
 
@@ -462,6 +708,17 @@ export default function Home() {
           }
           console.log('📤 发送我的状态给新连接:', conn.peer, update)
           conn.send(JSON.stringify(update))
+
+          // 如果我在语音室内，也发送语音室状态
+          if (currentVoiceRoom) {
+            const voiceUpdate: VoiceRoomUpdate = {
+              type: 'voice-join',
+              peerId: myPlayerRef.current.peerId,
+              roomId: currentVoiceRoom,
+              timestamp: Date.now()
+            }
+            conn.send(JSON.stringify(voiceUpdate))
+          }
         } else {
           console.log('⚠️ 接受连接但还没有选择角色')
         }
@@ -482,6 +739,14 @@ export default function Home() {
           newMap.delete(conn.peer)
           return newMap
         })
+
+        // 清理语音通话
+        const call = voiceCallsRef.current.get(conn.peer)
+        if (call) {
+          call.close()
+          voiceCallsRef.current.delete(conn.peer)
+        }
+        stopRemoteAudio(conn.peer)
       })
 
       conn.on('error', (err) => {
@@ -567,6 +832,28 @@ export default function Home() {
     }
     broadcastGameUpdate(leaveUpdate)
 
+    // 清理语音资源
+    voiceCallsRef.current.forEach((call) => {
+      try {
+        call.close()
+      } catch (error) {
+        console.error('关闭语音通话失败:', error)
+      }
+    })
+    voiceCallsRef.current.clear()
+
+    remoteAudiosRef.current.forEach((audio) => {
+      try {
+        audio.pause()
+        audio.srcObject = null
+      } catch (error) {
+        console.error('清理音频失败:', error)
+      }
+    })
+    remoteAudiosRef.current.clear()
+
+    disableMicrophone()
+
     connectionsRef.current.forEach((conn) => {
       try {
         conn.close()
@@ -603,6 +890,8 @@ export default function Home() {
     myPlayerRef.current = null
     setOtherPlayers(new Map())
     setSelectedCharacter(null)
+    setCurrentVoiceRoom(null)
+    setPlayersInRooms(new Map())
 
     console.log('✅ 已完全断开连接')
   }
@@ -651,6 +940,11 @@ export default function Home() {
         <div className={styles.stats}>
           <span>🌐 在线: {onlineUsers.length + 1}</span>
           <span>🔗 连接: {connections.size}</span>
+          {currentVoiceRoom && (
+            <span className={styles.voiceStatus}>
+              🎤 {isMicEnabled ? '开启' : '关闭'}
+            </span>
+          )}
         </div>
         <button onClick={disconnect} className={styles.disconnectBtn}>
           ❌ 退出
@@ -666,6 +960,9 @@ export default function Home() {
               myPlayer={myPlayer}
               otherPlayers={otherPlayers}
               onPositionUpdate={handlePositionUpdate}
+              onVoiceRoomChange={handleVoiceRoomChange}
+              currentVoiceRoom={currentVoiceRoom}
+              playersInRooms={playersInRooms}
             />
           )}
         </div>
