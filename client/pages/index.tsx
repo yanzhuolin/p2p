@@ -5,6 +5,7 @@ import CharacterSelect from '../components/CharacterSelect'
 import ChatPanel from '../components/ChatPanel'
 import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '@/types/game'
 import { useChatStore, Message } from '@/store/chatStore'
+import ConnectionManager from '@/services/ConnectionManager'
 import styles from '../styles/Game.module.css'
 
 interface OnlineUser {
@@ -23,6 +24,9 @@ const STORAGE_KEYS = {
 }
 
 export default function Home() {
+  // 连接管理单例
+  const connectionManager = useRef(ConnectionManager.getInstance()).current
+
   // 基础状态
   const [username, setUsername] = useState('')
   const [isConnected, setIsConnected] = useState(false)
@@ -53,10 +57,7 @@ export default function Home() {
   const [showDeviceSelector, setShowDeviceSelector] = useState(false)
 
   // Refs
-  const peerRef = useRef<Peer | null>(null)
-  const connectionsRef = useRef<Map<string, DataConnection>>(new Map())
   const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
-  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const myPlayerRef = useRef<Player | null>(null)
 
@@ -211,10 +212,40 @@ export default function Home() {
     }
   }, [])
 
+  // 订阅连接管理器的变化
+  useEffect(() => {
+    const unsubscribeConnections = connectionManager.onConnectionChange((newConnections) => {
+      setConnections(newConnections)
+    })
+
+    const unsubscribePeerId = connectionManager.onPeerIdChange((newPeerId) => {
+      setMyPeerId(newPeerId)
+    })
+
+    const unsubscribeData = connectionManager.onData((data, fromPeerId) => {
+      handleIncomingData(data, fromPeerId)
+    })
+
+    const unsubscribePlayerRemoved = connectionManager.onPlayerRemoved((peerId) => {
+      setOtherPlayers(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(peerId)
+        return newMap
+      })
+    })
+
+    return () => {
+      unsubscribeConnections()
+      unsubscribePeerId()
+      unsubscribeData()
+      unsubscribePlayerRemoved()
+    }
+  }, [connectionManager])
+
   // 页面刷新/关闭时清理
   useEffect(() => {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
-      const currentPeerId = peerRef.current?.id
+      const currentPeerId = connectionManager.getPeerId()
       if (currentPeerId) {
         const data = JSON.stringify({ peerId: currentPeerId })
         navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([data], { type: 'application/json' }))
@@ -226,7 +257,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
-  }, [])
+  }, [connectionManager])
 
   // 组件卸载时清理
   useEffect(() => {
@@ -234,71 +265,31 @@ export default function Home() {
       if (userListIntervalRef.current) {
         clearInterval(userListIntervalRef.current)
       }
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current)
-      }
       if (syncIntervalRef.current) {
         clearInterval(syncIntervalRef.current)
       }
 
-      connectionsRef.current.forEach((conn) => {
-        try {
-          conn.close()
-        } catch (error) {
-          // 忽略错误
-        }
-      })
+      connectionManager.closeAllConnections()
 
-      const currentPeerId = peerRef.current?.id
+      const currentPeerId = connectionManager.getPeerId()
       if (currentPeerId) {
         navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([JSON.stringify({ peerId: currentPeerId })], { type: 'application/json' }))
       }
     }
-  }, [])
+  }, [connectionManager])
 
-  // 发送心跳
-  const sendHeartbeat = async () => {
-    const currentPeerId = peerRef.current?.id
-    if (!currentPeerId || !peerRef.current || peerRef.current.destroyed) return
 
-    try {
-      await fetch(`${API_SERVER}/api/heartbeat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ peerId: currentPeerId }),
-        signal: AbortSignal.timeout(3000)
-      })
-    } catch (error) {
-      // 忽略心跳错误
-    }
-  }
 
   // 广播游戏状态更新
   const broadcastGameUpdate = (update: PlayerUpdate) => {
     const message = JSON.stringify(update)
-    connectionsRef.current.forEach((conn, peerId) => {
-      if (conn.open) {
-        try {
-          conn.send(message)
-        } catch (error) {
-          console.error(`发送游戏更新失败 (${peerId}):`, error)
-        }
-      }
-    })
+    connectionManager.broadcast(message)
   }
 
   // 广播语音室更新
   const broadcastVoiceUpdate = (update: VoiceRoomUpdate) => {
     const message = JSON.stringify(update)
-    connectionsRef.current.forEach((conn, peerId) => {
-      if (conn.open) {
-        try {
-          conn.send(message)
-        } catch (error) {
-          console.error(`发送语音更新失败 (${peerId}):`, error)
-        }
-      }
-    })
+    connectionManager.broadcast(message)
   }
 
   // 处理位置更新
@@ -315,7 +306,7 @@ export default function Home() {
     // 广播位置更新
     const update: PlayerUpdate = {
       type: 'position',
-      peerId: peerRef.current?.id || '',
+      peerId: connectionManager.getPeerId(),
       position,
       velocity,
       timestamp: Date.now()
@@ -437,10 +428,11 @@ export default function Home() {
 
   // 呼叫语音室内的其他玩家
   const callPeer = async (peerId: string, stream: MediaStream) => {
-    if (!peerRef.current) return
+    const peer = connectionManager.getPeer()
+    if (!peer) return
 
     try {
-      const call = peerRef.current.call(peerId, stream)
+      const call = peer.call(peerId, stream)
 
       call.on('stream', (remoteStream) => {
         playRemoteAudio(peerId, remoteStream)
@@ -546,7 +538,7 @@ export default function Home() {
     if (oldRoomId) {
       const leaveUpdate: VoiceRoomUpdate = {
         type: 'voice-leave',
-        peerId: peerRef.current?.id || '',
+        peerId: connectionManager.getPeerId(),
         roomId: oldRoomId,
         timestamp: Date.now()
       }
@@ -582,17 +574,18 @@ export default function Home() {
       }
 
       // 把自己加入到房间列表
+      const myPeerId = connectionManager.getPeerId()
       setPlayersInRooms(prev => {
         const newMap = new Map(prev)
         const roomPlayers = newMap.get(newRoomId) || new Set()
-        roomPlayers.add(peerRef.current?.id || '')
+        roomPlayers.add(myPeerId)
         newMap.set(newRoomId, roomPlayers)
         return newMap
       })
 
       const joinUpdate: VoiceRoomUpdate = {
         type: 'voice-join',
-        peerId: peerRef.current?.id || '',
+        peerId: myPeerId,
         roomId: newRoomId,
         timestamp: Date.now()
       }
@@ -601,7 +594,7 @@ export default function Home() {
       const playersInRoom = playersInRooms.get(newRoomId)
       if (playersInRoom && playersInRoom.size > 0) {
         playersInRoom.forEach(peerId => {
-          if (peerId !== peerRef.current?.id) {
+          if (peerId !== myPeerId) {
             callPeer(peerId, stream)
           }
         })
@@ -627,7 +620,7 @@ export default function Home() {
 
     // 创建玩家对象
     const player: Player = {
-      peerId: peerRef.current?.id || '',
+      peerId: connectionManager.getPeerId(),
       username,
       character,
       position: currentPosition,
@@ -651,11 +644,12 @@ export default function Home() {
 
   // 获取在线用户列表
   const fetchOnlineUsers = async () => {
-    if (!peerRef.current || peerRef.current.destroyed) {
+    const peer = connectionManager.getPeer()
+    if (!peer || peer.destroyed) {
       return
     }
 
-    const currentPeerId = peerRef.current.id
+    const currentPeerId = connectionManager.getPeerId()
 
     try {
       const response = await fetch(`${API_SERVER}/api/users`, {
@@ -672,7 +666,7 @@ export default function Home() {
       setOnlineUsers(users)
 
       users.forEach((user: OnlineUser) => {
-        if (!connectionsRef.current.has(user.peerId)) {
+        if (!connectionManager.hasConnection(user.peerId)) {
           setTimeout(() => connectToPeer(user.peerId), Math.random() * 1000)
         }
       })
@@ -685,79 +679,26 @@ export default function Home() {
 
   // 连接到其他用户
   const connectToPeer = (peerId: string) => {
-    if (!peerRef.current || peerRef.current.destroyed) {
-      return
-    }
-
-    if (connectionsRef.current.has(peerId)) {
-      return
-    }
-
-    console.log('🔗 正在连接到:', peerId)
-
-    try {
-      const conn = peerRef.current.connect(peerId, {
-        reliable: true,
-        serialization: 'json'
-      })
-
-      const timeoutId = setTimeout(() => {
-        if (!conn.open) {
-          console.log('⏰ 连接超时:', peerId)
-          conn.close()
+    connectionManager.connectToPeer(peerId, (connectedPeerId) => {
+      // 如果已经选择了角色，发送加入消息
+      if (myPlayerRef.current) {
+        const update: PlayerUpdate = {
+          type: 'join',
+          peerId: myPlayerRef.current.peerId,
+          username: myPlayerRef.current.username,
+          character: myPlayerRef.current.character,
+          position: myPlayerRef.current.position,
+          timestamp: Date.now()
         }
-      }, 10000)
-
-      conn.on('open', () => {
-        clearTimeout(timeoutId)
-        console.log('✅ 已连接到:', peerId)
-        connectionsRef.current.set(peerId, conn)
-        setConnections(new Map(connectionsRef.current))
-
-        // 如果已经选择了角色，发送加入消息
-        if (myPlayerRef.current) {
-          const update: PlayerUpdate = {
-            type: 'join',
-            peerId: myPlayerRef.current.peerId,
-            username: myPlayerRef.current.username,
-            character: myPlayerRef.current.character,
-            position: myPlayerRef.current.position,
-            timestamp: Date.now()
-          }
-          console.log('📤 发送我的状态给:', peerId, update)
+        console.log('📤 发送我的状态给:', connectedPeerId, update)
+        const conn = connectionManager.getConnection(connectedPeerId)
+        if (conn) {
           conn.send(JSON.stringify(update))
-        } else {
-          console.log('⚠️ 连接建立但还没有选择角色')
         }
-      })
-
-      conn.on('data', (data) => {
-        handleIncomingData(data, peerId)
-      })
-
-      conn.on('close', () => {
-        console.log('❌ 连接关闭:', peerId)
-        connectionsRef.current.delete(peerId)
-        setConnections(new Map(connectionsRef.current))
-
-        // 移除该玩家
-        setOtherPlayers(prev => {
-          const newMap = new Map(prev)
-          newMap.delete(peerId)
-          return newMap
-        })
-      })
-
-      conn.on('error', (err) => {
-        clearTimeout(timeoutId)
-        const errorType = (err as any).type
-        if (errorType !== 'peer-unavailable' && errorType !== 'network') {
-          console.error('⚠️ 连接错误:', peerId, errorType)
-        }
-      })
-    } catch (error) {
-      console.error('连接失败:', error)
-    }
+      } else {
+        console.log('⚠️ 连接建立但还没有选择角色')
+      }
+    })
   }
 
 
@@ -903,159 +844,129 @@ export default function Home() {
       localStorage.setItem(STORAGE_KEYS.USERNAME, username)
     }
 
-    const peer = new Peer({
-      host: SIGNALING_SERVER,
-      port: SIGNALING_PORT,
-      path: '/myapp',
-      debug: 2
-    })
+    connectionManager.initializePeer(
+      {
+        host: SIGNALING_SERVER,
+        port: SIGNALING_PORT,
+        path: '/myapp',
+        debug: 2,
+        apiServerUrl: API_SERVER,
+        heartbeatInterval: 10000
+      },
+      {
+        onOpen: async (id) => {
+          console.log('✅ 我的Peer ID:', id)
+          setIsConnected(true)
 
-    peer.on('open', async (id) => {
-      console.log('✅ 我的Peer ID:', id)
-      setMyPeerId(id)
-      setIsConnected(true)
-      peerRef.current = peer
-
-      // 注册到API服务器
-      try {
-        const response = await fetch(`${API_SERVER}/api/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ peerId: id, username })
-        })
-        const data = await response.json()
-        if (data.success) {
-          console.log('✅ 已注册到服务器')
-        }
-      } catch (error) {
-        console.error('注册失败:', error)
-      }
-
-      // 启动心跳
-      if (heartbeatIntervalRef.current) {
-        clearInterval(heartbeatIntervalRef.current)
-      }
-      heartbeatIntervalRef.current = setInterval(sendHeartbeat, 10000)
-      sendHeartbeat()
-
-      // 延迟后获取用户列表
-      setTimeout(fetchOnlineUsers, 500)
-
-      // 定期刷新用户列表
-      if (userListIntervalRef.current) {
-        clearInterval(userListIntervalRef.current)
-      }
-      userListIntervalRef.current = setInterval(fetchOnlineUsers, 3000)
-
-      // 如果已经有选中的角色，自动创建玩家；否则显示角色选择
-      if (selectedCharacter) {
-        const player: Player = {
-          peerId: id,
-          username,
-          character: selectedCharacter,
-          position: {
-            x: GAME_CONFIG.CANVAS_WIDTH / 2,
-            y: GAME_CONFIG.CANVAS_HEIGHT / 2
-          },
-          velocity: { x: 0, y: 0 },
-          lastUpdate: Date.now()
-        }
-        setMyPlayer(player)
-        myPlayerRef.current = player
-
-        // 广播加入游戏
-        const update: PlayerUpdate = {
-          type: 'join',
-          peerId: player.peerId,
-          username: player.username,
-          character: player.character,
-          position: player.position,
-          timestamp: Date.now()
-        }
-        broadcastGameUpdate(update)
-      } else {
-        setShowCharacterSelect(true)
-      }
-    })
-
-    // 接收语音呼叫
-    peer.on('call', (call) => {
-      if (localStreamRef.current) {
-        call.answer(localStreamRef.current)
-
-        call.on('stream', (remoteStream) => {
-          playRemoteAudio(call.peer, remoteStream)
-        })
-
-        call.on('close', () => {
-          stopRemoteAudio(call.peer)
-        })
-
-        call.on('error', (error) => {
-          console.error('通话错误:', call.peer, error)
-        })
-
-        voiceCallsRef.current.set(call.peer, call)
-      } else {
-        call.close()
-      }
-    })
-
-    peer.on('connection', (conn) => {
-      conn.on('open', () => {
-        connectionsRef.current.set(conn.peer, conn)
-        setConnections(new Map(connectionsRef.current))
-
-        if (myPlayerRef.current) {
-          const update: PlayerUpdate = {
-            type: 'join',
-            peerId: myPlayerRef.current.peerId,
-            username: myPlayerRef.current.username,
-            character: myPlayerRef.current.character,
-            position: myPlayerRef.current.position,
-            timestamp: Date.now()
+          // 注册到API服务器
+          try {
+            const response = await fetch(`${API_SERVER}/api/register`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ peerId: id, username })
+            })
+            const data = await response.json()
+            if (data.success) {
+              console.log('✅ 已注册到服务器')
+            }
+          } catch (error) {
+            console.error('注册失败:', error)
           }
-          conn.send(JSON.stringify(update))
 
-          if (currentVoiceRoom) {
-            const voiceUpdate: VoiceRoomUpdate = {
-              type: 'voice-join',
-              peerId: myPlayerRef.current.peerId,
-              roomId: currentVoiceRoom,
+          // 延迟后获取用户列表
+          setTimeout(fetchOnlineUsers, 500)
+
+          // 定期刷新用户列表
+          if (userListIntervalRef.current) {
+            clearInterval(userListIntervalRef.current)
+          }
+          userListIntervalRef.current = setInterval(fetchOnlineUsers, 3000)
+
+          // 如果已经有选中的角色，自动创建玩家；否则显示角色选择
+          if (selectedCharacter) {
+            const player: Player = {
+              peerId: id,
+              username,
+              character: selectedCharacter,
+              position: {
+                x: GAME_CONFIG.CANVAS_WIDTH / 2,
+                y: GAME_CONFIG.CANVAS_HEIGHT / 2
+              },
+              velocity: { x: 0, y: 0 },
+              lastUpdate: Date.now()
+            }
+            setMyPlayer(player)
+            myPlayerRef.current = player
+
+            // 广播加入游戏
+            const update: PlayerUpdate = {
+              type: 'join',
+              peerId: player.peerId,
+              username: player.username,
+              character: player.character,
+              position: player.position,
               timestamp: Date.now()
             }
-            conn.send(JSON.stringify(voiceUpdate))
+            broadcastGameUpdate(update)
+          } else {
+            setShowCharacterSelect(true)
+          }
+        },
+        onCall: (call) => {
+          if (localStreamRef.current) {
+            call.answer(localStreamRef.current)
+
+            call.on('stream', (remoteStream) => {
+              playRemoteAudio(call.peer, remoteStream)
+            })
+
+            call.on('close', () => {
+              stopRemoteAudio(call.peer)
+            })
+
+            call.on('error', (error) => {
+              console.error('通话错误:', call.peer, error)
+            })
+
+            voiceCallsRef.current.set(call.peer, call)
+          } else {
+            call.close()
+          }
+        },
+        onConnection: (conn) => {
+          if (myPlayerRef.current) {
+            const update: PlayerUpdate = {
+              type: 'join',
+              peerId: myPlayerRef.current.peerId,
+              username: myPlayerRef.current.username,
+              character: myPlayerRef.current.character,
+              position: myPlayerRef.current.position,
+              timestamp: Date.now()
+            }
+            conn.send(JSON.stringify(update))
+
+            if (currentVoiceRoom) {
+              const voiceUpdate: VoiceRoomUpdate = {
+                type: 'voice-join',
+                peerId: myPlayerRef.current.peerId,
+                roomId: currentVoiceRoom,
+                timestamp: Date.now()
+              }
+              conn.send(JSON.stringify(voiceUpdate))
+            }
+          }
+        },
+        onError: (err) => {
+          console.error('Peer错误:', err)
+          const errorType = (err as any).type
+          if (errorType === 'peer-unavailable') {
+            console.log('对方不在线')
+          } else {
+            alert(`连接错误: ${err.message}`)
           }
         }
-      })
-
-      conn.on('data', (data) => {
-        handleIncomingData(data, conn.peer)
-      })
-
-      conn.on('close', () => {
-        connectionsRef.current.delete(conn.peer)
-        setConnections(new Map(connectionsRef.current))
-        setOtherPlayers(prev => {
-          const newMap = new Map(prev)
-          newMap.delete(conn.peer)
-          return newMap
-        })
-      })
-
-      conn.on('error', (err) => {
-        console.error('连接错误:', conn.peer, err)
-      })
-    })
-
-    peer.on('error', (err) => {
-      console.error('Peer错误:', err)
-      if (err.type === 'peer-unavailable') {
-        console.log('对方不在线')
-      } else {
-        alert(`连接错误: ${err.message}`)
       }
-    })
+    )
   }
 
 
@@ -1081,15 +992,7 @@ export default function Home() {
       timestamp: message.timestamp
     }
 
-    connectionsRef.current.forEach((conn) => {
-      if (conn.open) {
-        try {
-          conn.send(JSON.stringify(messageData))
-        } catch (error) {
-          console.error('发送消息失败:', error)
-        }
-      }
-    })
+    connectionManager.broadcast(JSON.stringify(messageData))
   }
 
   // 断开连接
@@ -1097,11 +1000,6 @@ export default function Home() {
     if (userListIntervalRef.current) {
       clearInterval(userListIntervalRef.current)
       userListIntervalRef.current = null
-    }
-
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current)
-      heartbeatIntervalRef.current = null
     }
 
     if (syncIntervalRef.current) {
@@ -1112,7 +1010,7 @@ export default function Home() {
     // 广播离开消息
     const leaveUpdate: PlayerUpdate = {
       type: 'leave',
-      peerId: peerRef.current?.id || '',
+      peerId: connectionManager.getPeerId(),
       timestamp: Date.now()
     }
     broadcastGameUpdate(leaveUpdate)
@@ -1160,17 +1058,7 @@ export default function Home() {
 
     disableMicrophone()
 
-    connectionsRef.current.forEach((conn) => {
-      try {
-        conn.close()
-      } catch (error) {
-        console.error('关闭连接失败:', error)
-      }
-    })
-    connectionsRef.current.clear()
-    setConnections(new Map())
-
-    const currentPeerId = peerRef.current?.id || myPeerId
+    const currentPeerId = connectionManager.getPeerId()
     if (currentPeerId) {
       try {
         await fetch(`${API_SERVER}/api/unregister`, {
@@ -1183,13 +1071,9 @@ export default function Home() {
       }
     }
 
-    if (peerRef.current) {
-      peerRef.current.destroy()
-    }
-    peerRef.current = null
+    connectionManager.destroy()
 
     setIsConnected(false)
-    setMyPeerId('')
     clearMessages()
     setOnlineUsers([])
     setMyPlayer(null)
@@ -1336,8 +1220,9 @@ export default function Home() {
                                 if (stream) {
                                   const playersInRoom = playersInRooms.get(currentVoiceRoom)
                                   if (playersInRoom && playersInRoom.size > 0) {
+                                    const myPeerId = connectionManager.getPeerId()
                                     playersInRoom.forEach(peerId => {
-                                      if (peerId !== peerRef.current?.id) {
+                                      if (peerId !== myPeerId) {
                                         callPeer(peerId, stream)
                                       }
                                     })
