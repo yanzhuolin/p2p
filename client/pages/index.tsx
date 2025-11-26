@@ -4,7 +4,7 @@ import GameWorld from '../components/GameWorld'
 import CharacterSelect from '../components/CharacterSelect'
 import ChatPanel from '../components/ChatPanel'
 import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '@/types/game'
-import { useChatStore, Message } from '@/store/chatStore'
+import { useChatStore } from '@/store/chatStore'
 import ConnectionManager from '@/services/ConnectionManager'
 import styles from '../styles/Game.module.css'
 
@@ -39,7 +39,6 @@ export default function Home() {
   const [otherPlayers, setOtherPlayers] = useState<Map<string, Player>>(new Map())
 
   // 聊天状态
-  const addMessage = useChatStore((state) => state.addMessage)
   const clearMessages = useChatStore((state) => state.clearMessages)
   const [onlineUsers, setOnlineUsers] = useState<OnlineUser[]>([])
   const [connections, setConnections] = useState<Map<string, DataConnection>>(new Map())
@@ -716,18 +715,7 @@ export default function Home() {
       else if (parsed.type && (parsed.type === 'voice-join' || parsed.type === 'voice-leave')) {
         handleVoiceUpdate(parsed as VoiceRoomUpdate, fromPeerId)
       }
-      // 聊天消息
-      else if (parsed.text) {
-        const message: Message = {
-          id: parsed.id || `${Date.now()}-${Math.random()}`,
-          peerId: fromPeerId,
-          username: parsed.username || parsed.sender || '未知用户',
-          text: parsed.text,
-          timestamp: parsed.timestamp
-        }
-
-        addMessage(message)
-      }
+      // 聊天消息由 ChatPanel 组件处理
     } catch (error) {
       console.error('处理数据失败:', error)
     }
@@ -971,29 +959,7 @@ export default function Home() {
 
 
 
-  // 发送消息
-  const sendMessage = (text: string) => {
-    if (!text.trim()) return
 
-    const message: Message = {
-      id: `${Date.now()}-${Math.random()}`,
-      peerId: myPeerId,
-      username: username,
-      text: text,
-      timestamp: Date.now()
-    }
-
-    addMessage(message)
-
-    const messageData = {
-      id: message.id,
-      text: message.text,
-      username: message.username,
-      timestamp: message.timestamp
-    }
-
-    connectionManager.broadcast(JSON.stringify(messageData))
-  }
 
   // 断开连接
   const disconnect = async () => {
@@ -1312,7 +1278,7 @@ export default function Home() {
         )}
 
         {/* 聊天面板 */}
-        <ChatPanel myPeerId={myPeerId} onSendMessage={sendMessage} />
+        <ChatPanel username={username} />
       </div>
     </div>
   )
