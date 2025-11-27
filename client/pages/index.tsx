@@ -41,9 +41,6 @@ export default function Home() {
   // 从 gameStore 获取状态和 actions
   const myPlayer = useGameStore((state) => state.myPlayer)
   const setMyPlayer = useGameStore((state) => state.setMyPlayer)
-  const otherPlayers = useGameStore((state) => state.otherPlayers)
-  const setOtherPlayer = useGameStore((state) => state.setOtherPlayer)
-  const removeOtherPlayer = useGameStore((state) => state.removeOtherPlayer)
   const currentVoiceRoom = useGameStore((state) => state.currentVoiceRoom)
   const playersInRooms = useGameStore((state) => state.playersInRooms)
   const addPlayerToRoom = useGameStore((state) => state.addPlayerToRoom)
@@ -233,15 +230,12 @@ export default function Home() {
       handleIncomingData(data, fromPeerId)
     })
 
-    const unsubscribePlayerRemoved = connectionManager.onPlayerRemoved((peerId) => {
-      removeOtherPlayer(peerId)
-    })
+    // 玩家移除事件由 GameWorld 组件处理
 
     return () => {
       unsubscribeConnections()
       unsubscribePeerId()
       unsubscribeData()
-      unsubscribePlayerRemoved()
     }
   }, [connectionManager])
 
@@ -680,12 +674,9 @@ export default function Home() {
     try {
       const parsed = typeof data === 'string' ? JSON.parse(data) : data
 
-      // 游戏更新
-      if (parsed.type && (parsed.type === 'join' || parsed.type === 'position' || parsed.type === 'leave')) {
-        handleGameUpdate(parsed as PlayerUpdate, fromPeerId)
-      }
+      // 游戏更新由 GameWorld 组件处理
       // 语音室更新
-      else if (parsed.type && (parsed.type === 'voice-join' || parsed.type === 'voice-leave')) {
+      if (parsed.type && (parsed.type === 'voice-join' || parsed.type === 'voice-leave')) {
         handleVoiceUpdate(parsed as VoiceRoomUpdate, fromPeerId)
       }
       // 聊天消息由 ChatPanel 组件处理
@@ -720,48 +711,7 @@ export default function Home() {
     }
   }
 
-  // 处理游戏更新
-  const handleGameUpdate = (update: PlayerUpdate, fromPeerId: string) => {
-    console.log('🎮 收到游戏更新:', update.type, 'from', fromPeerId)
-    switch (update.type) {
-      case 'join':
-        if (update.username && update.character && update.position) {
-          const newPlayer: Player = {
-            peerId: fromPeerId,
-            username: update.username,
-            character: update.character,
-            position: update.position,
-            velocity: { x: 0, y: 0 },
-            lastUpdate: Date.now()
-          }
-          setOtherPlayer(fromPeerId, newPlayer)
-          console.log('🎮 玩家加入:', update.username, '当前其他玩家数:', otherPlayers.size + 1)
-        } else {
-          console.log('⚠️ join 消息缺少必要字段:', update)
-        }
-        break
 
-      case 'position':
-        if (update.position) {
-          const player = otherPlayers.get(fromPeerId)
-          if (player) {
-            const updated = {
-              ...player,
-              position: update.position!,
-              velocity: update.velocity || { x: 0, y: 0 },
-              lastUpdate: Date.now()
-            }
-            setOtherPlayer(fromPeerId, updated)
-          }
-        }
-        break
-
-      case 'leave':
-        removeOtherPlayer(fromPeerId)
-        console.log('🎮 玩家离开:', fromPeerId)
-        break
-    }
-  }
 
 
 

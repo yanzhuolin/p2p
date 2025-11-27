@@ -23,6 +23,8 @@ export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
   const updateMyPlayerPosition = useGameStore((state) => state.updateMyPlayerPosition)
   const setCurrentVoiceRoom = useGameStore((state) => state.setCurrentVoiceRoom)
   const addPlayerToRoom = useGameStore((state) => state.addPlayerToRoom)
+  const setOtherPlayer = useGameStore((state) => state.setOtherPlayer)
+  const removeOtherPlayer = useGameStore((state) => state.removeOtherPlayer)
 
   if (!myPlayer) return null
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -50,6 +52,78 @@ export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
     }
     return null
   }
+
+  // 处理游戏更新
+  const handleGameUpdate = (update: PlayerUpdate, fromPeerId: string) => {
+    console.log('🎮 收到游戏更新:', update.type, 'from', fromPeerId)
+    switch (update.type) {
+      case 'join':
+        if (update.username && update.character && update.position) {
+          const newPlayer: Player = {
+            peerId: fromPeerId,
+            username: update.username,
+            character: update.character,
+            position: update.position,
+            velocity: { x: 0, y: 0 },
+            lastUpdate: Date.now()
+          }
+          setOtherPlayer(fromPeerId, newPlayer)
+          const currentOtherPlayers = useGameStore.getState().otherPlayers
+          console.log('🎮 玩家加入:', update.username, '当前其他玩家数:', currentOtherPlayers.size)
+        } else {
+          console.log('⚠️ join 消息缺少必要字段:', update)
+        }
+        break
+
+      case 'position':
+        if (update.position) {
+          // 使用 getState() 获取最新的状态
+          const currentOtherPlayers = useGameStore.getState().otherPlayers
+          const player = currentOtherPlayers.get(fromPeerId)
+          if (player) {
+            const updated = {
+              ...player,
+              position: update.position!,
+              velocity: update.velocity || { x: 0, y: 0 },
+              lastUpdate: Date.now()
+            }
+            setOtherPlayer(fromPeerId, updated)
+          }
+        }
+        break
+
+      case 'leave':
+        removeOtherPlayer(fromPeerId)
+        console.log('🎮 玩家离开:', fromPeerId)
+        break
+    }
+  }
+
+  // 订阅游戏数据更新和玩家移除事件
+  useEffect(() => {
+    const unsubscribeData = connectionManager.onData((data, fromPeerId) => {
+      try {
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data
+
+        // 只处理游戏更新消息
+        if (parsed.type && (parsed.type === 'join' || parsed.type === 'position' || parsed.type === 'leave')) {
+          handleGameUpdate(parsed as PlayerUpdate, fromPeerId)
+        }
+      } catch (error) {
+        console.error('处理游戏数据失败:', error)
+      }
+    })
+
+    const unsubscribePlayerRemoved = connectionManager.onPlayerRemoved((peerId) => {
+      removeOtherPlayer(peerId)
+      console.log('🎮 玩家断开连接:', peerId)
+    })
+
+    return () => {
+      unsubscribeData()
+      unsubscribePlayerRemoved()
+    }
+  }, [])
 
   // 键盘控制
   useEffect(() => {
