@@ -397,7 +397,7 @@ export default function Home() {
     )
   }
 
-  // 断开连接
+  // 断开连接（只需要修改用户名，不需要重新选择角色）
   const disconnect = async () => {
     if (syncIntervalRef.current) {
       clearInterval(syncIntervalRef.current)
@@ -433,7 +433,8 @@ export default function Home() {
     clearMessages()
     setOnlineUsers([])
     myPlayerRef.current = null
-    setSelectedCharacter(null)
+    // 不清除 selectedCharacter，保留角色选择
+    // setSelectedCharacter(null)
     useGameStore.getState().reset()
 
     console.log('✅ 已完全断开连接')
