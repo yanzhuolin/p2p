@@ -5,16 +5,11 @@ import ConnectionManager from '../services/ConnectionManager'
 
 const connectionManager = ConnectionManager.getInstance()
 
-interface VoiceRoomCallbacks {
-  onEnterRoom?: (roomId: string) => Promise<MediaStream | null>
-  onLeaveRoom?: (roomId: string) => Promise<void>
-}
-
 interface GameWorldProps {
-  voiceCallbacks?: VoiceRoomCallbacks
+  // 不需要任何 props
 }
 
-export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
+export default function GameWorld({}: GameWorldProps) {
   // 从 store 获取状态
   const myPlayer = useGameStore((state) => state.myPlayer)
   const otherPlayers = useGameStore((state) => state.otherPlayers)
@@ -26,7 +21,7 @@ export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
   const setOtherPlayer = useGameStore((state) => state.setOtherPlayer)
   const removeOtherPlayer = useGameStore((state) => state.removeOtherPlayer)
 
-  if (!myPlayer) return null
+  // Hooks 必须在条件语句之前调用
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number>()
   const keysPressed = useRef<Set<string>>(new Set())
@@ -35,8 +30,11 @@ export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
   const frameCount = useRef(0)
 
   // 玩家位置状态
-  const playerPosition = useRef<Position>(myPlayer.position)
+  const playerPosition = useRef<Position>(myPlayer?.position || { x: 400, y: 300 })
   const playerVelocity = useRef({ x: 0, y: 0 })
+
+  // 如果没有玩家数据，不渲染
+  if (!myPlayer) return null
 
   // 检测玩家是否在语音室内
   const checkVoiceRoom = (position: Position): string | null => {
@@ -201,40 +199,23 @@ export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
         timestamp: Date.now()
       }
       broadcastVoiceUpdate(leaveUpdate)
-
-      // 调用离开房间回调
-      if (voiceCallbacks?.onLeaveRoom) {
-        await voiceCallbacks.onLeaveRoom(oldRoomId)
-      }
     }
 
-    // 更新当前语音室
+    // 更新当前语音室（VoicePanel 会监听这个变化并处理语音逻辑）
     setCurrentVoiceRoom(newRoomId)
 
     // 加入新房间
     if (newRoomId) {
-      // 调用进入房间回调，获取音频流
-      let stream: MediaStream | null = null
-      if (voiceCallbacks?.onEnterRoom) {
-        stream = await voiceCallbacks.onEnterRoom(newRoomId)
-      }
+      const myPeerId = connectionManager.getPeerId()
+      addPlayerToRoom(newRoomId, myPeerId)
 
-      // 如果成功获取音频流，广播加入消息
-      if (stream) {
-        const myPeerId = connectionManager.getPeerId()
-        addPlayerToRoom(newRoomId, myPeerId)
-
-        const joinUpdate: VoiceRoomUpdate = {
-          type: 'voice-join',
-          peerId: myPeerId,
-          roomId: newRoomId,
-          timestamp: Date.now()
-        }
-        broadcastVoiceUpdate(joinUpdate)
-      } else {
-        // 如果没有获取到音频流，取消进入房间
-        setCurrentVoiceRoom(null)
+      const joinUpdate: VoiceRoomUpdate = {
+        type: 'voice-join',
+        peerId: myPeerId,
+        roomId: newRoomId,
+        timestamp: Date.now()
       }
+      broadcastVoiceUpdate(joinUpdate)
     }
   }
 
