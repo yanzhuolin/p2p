@@ -49,6 +49,7 @@ export default function Home() {
   // Refs
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const myPlayerRef = useRef<Player | null>(null)
+  const currentVoiceRoomRef = useRef<string | null>(null)
 
 
   // 初始化时从 localStorage 加载用户名和角色
@@ -90,6 +91,12 @@ export default function Home() {
       unsubscribeConnections()
     }
   }, [connectionManager])
+
+  // 同步 myPlayer 和 currentVoiceRoom 到 ref
+  useEffect(() => {
+    myPlayerRef.current = myPlayer
+    currentVoiceRoomRef.current = currentVoiceRoom
+  }, [myPlayer, currentVoiceRoom])
 
   // 页面刷新/关闭时清理
   useEffect(() => {
@@ -234,18 +241,33 @@ export default function Home() {
     connectionManager.connectToPeer(peerId, (connectedPeerId) => {
       // 如果已经选择了角色，发送加入消息
       if (myPlayerRef.current) {
-        const update: PlayerUpdate = {
-          type: 'join',
-          peerId: myPlayerRef.current.peerId,
-          username: myPlayerRef.current.username,
-          character: myPlayerRef.current.character,
-          position: myPlayerRef.current.position,
-          timestamp: Date.now()
-        }
-        console.log('📤 发送我的状态给:', connectedPeerId, update)
         const conn = connectionManager.getConnection(connectedPeerId)
         if (conn) {
+          // 发送玩家加入消息（包含当前位置）
+          const update: PlayerUpdate = {
+            type: 'join',
+            peerId: myPlayerRef.current.peerId,
+            username: myPlayerRef.current.username,
+            character: myPlayerRef.current.character,
+            position: myPlayerRef.current.position,
+            timestamp: Date.now()
+          }
+          console.log('📤 connectToPeer 发送玩家状态给:', connectedPeerId, update)
           conn.send(JSON.stringify(update))
+
+          // 如果在语音室中，发送语音室加入消息
+          if (currentVoiceRoomRef.current) {
+            const voiceUpdate: VoiceRoomUpdate = {
+              type: 'voice-join',
+              peerId: myPlayerRef.current.peerId,
+              roomId: currentVoiceRoomRef.current,
+              timestamp: Date.now()
+            }
+            console.log('📤 connectToPeer 发送语音室状态给:', connectedPeerId, voiceUpdate)
+            conn.send(JSON.stringify(voiceUpdate))
+          } else {
+            console.log('⚠️ connectToPeer: 不在语音室中，不发送语音室信息')
+          }
         }
       } else {
         console.log('⚠️ 连接建立但还没有选择角色')
@@ -331,7 +353,9 @@ export default function Home() {
         },
         // onCall 回调由 ConnectionManager 和 VoicePanel 处理
         onConnection: (conn) => {
+          console.log('🔗 收到新连接:', conn.peer, 'myPlayer:', myPlayerRef.current?.username, 'voiceRoom:', currentVoiceRoomRef.current)
           if (myPlayerRef.current) {
+            // 发送玩家加入消息（包含当前位置）
             const update: PlayerUpdate = {
               type: 'join',
               peerId: myPlayerRef.current.peerId,
@@ -340,17 +364,24 @@ export default function Home() {
               position: myPlayerRef.current.position,
               timestamp: Date.now()
             }
+            console.log('📤 onConnection 发送玩家状态给:', conn.peer, update)
             conn.send(JSON.stringify(update))
 
-            if (currentVoiceRoom) {
+            // 如果在语音室中，发送语音室加入消息
+            if (currentVoiceRoomRef.current) {
               const voiceUpdate: VoiceRoomUpdate = {
                 type: 'voice-join',
                 peerId: myPlayerRef.current.peerId,
-                roomId: currentVoiceRoom,
+                roomId: currentVoiceRoomRef.current,
                 timestamp: Date.now()
               }
+              console.log('📤 onConnection 发送语音室状态给:', conn.peer, voiceUpdate)
               conn.send(JSON.stringify(voiceUpdate))
+            } else {
+              console.log('⚠️ onConnection: 不在语音室中，不发送语音室信息')
             }
+          } else {
+            console.log('⚠️ onConnection 触发但 myPlayerRef.current 为空')
           }
         },
         onError: (err) => {
