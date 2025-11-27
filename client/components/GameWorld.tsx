@@ -18,6 +18,7 @@ export default function GameWorld({}: GameWorldProps) {
   const updateMyPlayerPosition = useGameStore((state) => state.updateMyPlayerPosition)
   const setCurrentVoiceRoom = useGameStore((state) => state.setCurrentVoiceRoom)
   const addPlayerToRoom = useGameStore((state) => state.addPlayerToRoom)
+  const removePlayerFromRoom = useGameStore((state) => state.removePlayerFromRoom)
   const setOtherPlayer = useGameStore((state) => state.setOtherPlayer)
   const removeOtherPlayer = useGameStore((state) => state.removeOtherPlayer)
 
@@ -190,11 +191,16 @@ export default function GameWorld({}: GameWorldProps) {
 
     console.log('🚪 语音室变化:', oldRoomId, '->', newRoomId)
 
+    const myPeerId = connectionManager.getPeerId()
+
     // 离开旧房间
     if (oldRoomId) {
+      // 从房间中移除自己
+      removePlayerFromRoom(oldRoomId, myPeerId)
+
       const leaveUpdate: VoiceRoomUpdate = {
         type: 'voice-leave',
-        peerId: connectionManager.getPeerId(),
+        peerId: myPeerId,
         roomId: oldRoomId,
         timestamp: Date.now()
       }
@@ -206,7 +212,7 @@ export default function GameWorld({}: GameWorldProps) {
 
     // 加入新房间
     if (newRoomId) {
-      const myPeerId = connectionManager.getPeerId()
+      // 添加自己到房间
       addPlayerToRoom(newRoomId, myPeerId)
 
       const joinUpdate: VoiceRoomUpdate = {
