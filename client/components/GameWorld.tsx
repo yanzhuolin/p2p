@@ -1,23 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import { Player, Position, GAME_CONFIG, VOICE_ROOMS, VoiceRoom } from '../types/game'
+import { Player, Position, GAME_CONFIG, VOICE_ROOMS, PlayerUpdate, VoiceRoomUpdate } from '@/types/game'
+import { useGameStore } from '@/store/gameStore'
+import ConnectionManager from '../services/ConnectionManager'
 
-interface GameWorldProps {
-  myPlayer: Player
-  otherPlayers: Map<string, Player>
-  onPositionUpdate: (position: Position, velocity: { x: number; y: number }) => void
-  onVoiceRoomChange?: (roomId: string | null) => void
-  currentVoiceRoom?: string | null
-  playersInRooms?: Map<string, Set<string>> // roomId -> Set of peerIds
+const connectionManager = ConnectionManager.getInstance()
+
+interface VoiceRoomCallbacks {
+  onEnterRoom?: (roomId: string) => Promise<MediaStream | null>
+  onLeaveRoom?: (roomId: string) => Promise<void>
 }
 
-export default function GameWorld({
-  myPlayer,
-  otherPlayers,
-  onPositionUpdate,
-  onVoiceRoomChange,
-  currentVoiceRoom,
-  playersInRooms = new Map()
-}: GameWorldProps) {
+interface GameWorldProps {
+  voiceCallbacks?: VoiceRoomCallbacks
+}
+
+export default function GameWorld({ voiceCallbacks }: GameWorldProps) {
+  // 从 store 获取状态
+  const myPlayer = useGameStore((state) => state.myPlayer)
+  const otherPlayers = useGameStore((state) => state.otherPlayers)
+  const currentVoiceRoom = useGameStore((state) => state.currentVoiceRoom)
+  const playersInRooms = useGameStore((state) => state.playersInRooms)
+  const updateMyPlayerPosition = useGameStore((state) => state.updateMyPlayerPosition)
+  const setCurrentVoiceRoom = useGameStore((state) => state.setCurrentVoiceRoom)
+  const addPlayerToRoom = useGameStore((state) => state.addPlayerToRoom)
+
+  if (!myPlayer) return null
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationFrameRef = useRef<number>()
   const keysPressed = useRef<Set<string>>(new Set())
@@ -91,6 +98,72 @@ export default function GameWorld({
     playerVelocity.current = { x: vx, y: vy }
   }
 
+  // 广播游戏更新
+  const broadcastGameUpdate = (update: PlayerUpdate) => {
+    const message = JSON.stringify(update)
+    connectionManager.broadcast(message)
+  }
+
+  // 广播语音更新
+  const broadcastVoiceUpdate = (update: VoiceRoomUpdate) => {
+    const message = JSON.stringify(update)
+    connectionManager.broadcast(message)
+  }
+
+  // 处理语音室变化
+  const handleVoiceRoomChange = async (newRoomId: string | null) => {
+    const oldRoomId = currentVoiceRoom
+
+    if (oldRoomId === newRoomId) return
+
+    console.log('🚪 语音室变化:', oldRoomId, '->', newRoomId)
+
+    // 离开旧房间
+    if (oldRoomId) {
+      const leaveUpdate: VoiceRoomUpdate = {
+        type: 'voice-leave',
+        peerId: connectionManager.getPeerId(),
+        roomId: oldRoomId,
+        timestamp: Date.now()
+      }
+      broadcastVoiceUpdate(leaveUpdate)
+
+      // 调用离开房间回调
+      if (voiceCallbacks?.onLeaveRoom) {
+        await voiceCallbacks.onLeaveRoom(oldRoomId)
+      }
+    }
+
+    // 更新当前语音室
+    setCurrentVoiceRoom(newRoomId)
+
+    // 加入新房间
+    if (newRoomId) {
+      // 调用进入房间回调，获取音频流
+      let stream: MediaStream | null = null
+      if (voiceCallbacks?.onEnterRoom) {
+        stream = await voiceCallbacks.onEnterRoom(newRoomId)
+      }
+
+      // 如果成功获取音频流，广播加入消息
+      if (stream) {
+        const myPeerId = connectionManager.getPeerId()
+        addPlayerToRoom(newRoomId, myPeerId)
+
+        const joinUpdate: VoiceRoomUpdate = {
+          type: 'voice-join',
+          peerId: myPeerId,
+          roomId: newRoomId,
+          timestamp: Date.now()
+        }
+        broadcastVoiceUpdate(joinUpdate)
+      } else {
+        // 如果没有获取到音频流，取消进入房间
+        setCurrentVoiceRoom(null)
+      }
+    }
+  }
+
   // 更新玩家位置
   const updatePosition = () => {
     updateVelocity()
@@ -107,13 +180,24 @@ export default function GameWorld({
 
     // 检测语音室变化
     const newRoom = checkVoiceRoom(playerPosition.current)
-    if (newRoom !== currentVoiceRoom && onVoiceRoomChange) {
-      onVoiceRoomChange(newRoom)
+    if (newRoom !== currentVoiceRoom) {
+      handleVoiceRoomChange(newRoom)
     }
 
-    // 如果位置或速度有变化，通知父组件
+    // 如果位置或速度有变化，更新 store 并广播
     if (playerVelocity.current.x !== 0 || playerVelocity.current.y !== 0) {
-      onPositionUpdate(playerPosition.current, playerVelocity.current)
+      // 更新本地状态
+      updateMyPlayerPosition(playerPosition.current, playerVelocity.current)
+
+      // 广播位置更新
+      const update: PlayerUpdate = {
+        type: 'position',
+        peerId: connectionManager.getPeerId(),
+        position: playerPosition.current,
+        velocity: playerVelocity.current,
+        timestamp: Date.now()
+      }
+      broadcastGameUpdate(update)
     }
   }
 

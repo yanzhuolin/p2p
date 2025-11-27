@@ -3,8 +3,10 @@ import Peer, { DataConnection, MediaConnection } from 'peerjs'
 import GameWorld from '../components/GameWorld'
 import CharacterSelect from '../components/CharacterSelect'
 import ChatPanel from '../components/ChatPanel'
+import VoicePanel from '../components/VoicePanel'
 import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '@/types/game'
 import { useChatStore } from '@/store/chatStore'
+import { useGameStore } from '@/store/gameStore'
 import ConnectionManager from '@/services/ConnectionManager'
 import styles from '../styles/Game.module.css'
 
@@ -35,8 +37,18 @@ export default function Home() {
   // 游戏状态
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null)
   const [showCharacterSelect, setShowCharacterSelect] = useState(false)
-  const [myPlayer, setMyPlayer] = useState<Player | null>(null)
-  const [otherPlayers, setOtherPlayers] = useState<Map<string, Player>>(new Map())
+
+  // 从 gameStore 获取状态和 actions
+  const myPlayer = useGameStore((state) => state.myPlayer)
+  const setMyPlayer = useGameStore((state) => state.setMyPlayer)
+  const otherPlayers = useGameStore((state) => state.otherPlayers)
+  const setOtherPlayer = useGameStore((state) => state.setOtherPlayer)
+  const removeOtherPlayer = useGameStore((state) => state.removeOtherPlayer)
+  const currentVoiceRoom = useGameStore((state) => state.currentVoiceRoom)
+  const playersInRooms = useGameStore((state) => state.playersInRooms)
+  const addPlayerToRoom = useGameStore((state) => state.addPlayerToRoom)
+  const removePlayerFromRoom = useGameStore((state) => state.removePlayerFromRoom)
+  const clearPlayersInRooms = useGameStore((state) => state.clearPlayersInRooms)
 
   // 聊天状态
   const clearMessages = useChatStore((state) => state.clearMessages)
@@ -44,16 +56,12 @@ export default function Home() {
   const [connections, setConnections] = useState<Map<string, DataConnection>>(new Map())
 
   // 语音状态
-  const [currentVoiceRoom, setCurrentVoiceRoom] = useState<string | null>(null)
   const [isMicEnabled, setIsMicEnabled] = useState(false)
-  const [playersInRooms, setPlayersInRooms] = useState<Map<string, Set<string>>>(new Map())
   const [playerMicStatus, setPlayerMicStatus] = useState<Map<string, { enabled: boolean, muted: boolean }>>(new Map())
-  const [showVoicePanel, setShowVoicePanel] = useState(true)
   const [playerVolumes, setPlayerVolumes] = useState<Map<string, number>>(new Map())
   const [myVolume, setMyVolume] = useState(0)
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
-  const [showDeviceSelector, setShowDeviceSelector] = useState(false)
 
   // Refs
   const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -226,11 +234,7 @@ export default function Home() {
     })
 
     const unsubscribePlayerRemoved = connectionManager.onPlayerRemoved((peerId) => {
-      setOtherPlayers(prev => {
-        const newMap = new Map(prev)
-        newMap.delete(peerId)
-        return newMap
-      })
+      removeOtherPlayer(peerId)
     })
 
     return () => {
@@ -283,34 +287,6 @@ export default function Home() {
   const broadcastGameUpdate = (update: PlayerUpdate) => {
     const message = JSON.stringify(update)
     connectionManager.broadcast(message)
-  }
-
-  // 广播语音室更新
-  const broadcastVoiceUpdate = (update: VoiceRoomUpdate) => {
-    const message = JSON.stringify(update)
-    connectionManager.broadcast(message)
-  }
-
-  // 处理位置更新
-  const handlePositionUpdate = (position: Position, velocity: { x: number; y: number }) => {
-    if (!myPlayer) return
-
-    // 更新本地玩家位置
-    setMyPlayer(prev => {
-      const updated = prev ? { ...prev, position, velocity, lastUpdate: Date.now() } : null
-      myPlayerRef.current = updated
-      return updated
-    })
-
-    // 广播位置更新
-    const update: PlayerUpdate = {
-      type: 'position',
-      peerId: connectionManager.getPeerId(),
-      position,
-      velocity,
-      timestamp: Date.now()
-    }
-    broadcastGameUpdate(update)
   }
 
   // 检查麦克风权限状态
@@ -525,79 +501,76 @@ export default function Home() {
     })
   }
 
-  // 处理语音室变化
-  const handleVoiceRoomChange = async (newRoomId: string | null) => {
-    const oldRoomId = currentVoiceRoom
+  // 语音室回调：进入房间
+  const handleEnterVoiceRoom = async (roomId: string): Promise<MediaStream | null> => {
+    const { selectedDevice } = await loadAudioDevices()
 
-    if (oldRoomId === newRoomId) return
+    const permissionState = await checkMicrophonePermission()
 
-    console.log('🚪 语音室变化:', oldRoomId, '->', newRoomId)
+    if (permissionState === 'denied') {
+      alert('麦克风权限已被拒绝\n\n请按以下步骤操作：\n1. 点击地址栏左侧的图标（锁或信息图标）\n2. 找到"麦克风"权限\n3. 设置为"允许"\n4. 刷新页面后重新进入语音室')
+      return null
+    }
 
-    // 离开旧房间
-    if (oldRoomId) {
-      const leaveUpdate: VoiceRoomUpdate = {
-        type: 'voice-leave',
-        peerId: connectionManager.getPeerId(),
-        roomId: oldRoomId,
-        timestamp: Date.now()
-      }
-      broadcastVoiceUpdate(leaveUpdate)
+    const stream = await enableMicrophone(selectedDevice || undefined)
+    if (!stream) {
+      return null
+    }
 
+    // 呼叫房间内的其他玩家
+    const playersInRoom = playersInRooms.get(roomId)
+    if (playersInRoom && playersInRoom.size > 0) {
+      const myPeerId = connectionManager.getPeerId()
+      playersInRoom.forEach(peerId => {
+        if (peerId !== myPeerId) {
+          callPeer(peerId, stream)
+        }
+      })
+    }
+
+    return stream
+  }
+
+  // 语音室回调：离开房间
+  const handleLeaveVoiceRoom = async (roomId: string): Promise<void> => {
+    voiceCallsRef.current.forEach((call, peerId) => {
+      call.close()
+      stopRemoteAudio(peerId)
+    })
+    voiceCallsRef.current.clear()
+
+    disableMicrophone()
+  }
+
+  // 处理音频设备切换
+  const handleDeviceChange = async (deviceId: string) => {
+    if (isMicEnabled && currentVoiceRoom) {
+      // 关闭所有通话
       voiceCallsRef.current.forEach((call, peerId) => {
         call.close()
         stopRemoteAudio(peerId)
       })
       voiceCallsRef.current.clear()
 
+      // 关闭麦克风
       disableMicrophone()
-    }
 
-    setCurrentVoiceRoom(newRoomId)
+      // 等待一下再重新启用
+      setTimeout(async () => {
+        const stream = await enableMicrophone(deviceId)
 
-    // 进入新房间
-    if (newRoomId) {
-      const { selectedDevice } = await loadAudioDevices()
-
-      const permissionState = await checkMicrophonePermission()
-
-      if (permissionState === 'denied') {
-        alert('麦克风权限已被拒绝\n\n请按以下步骤操作：\n1. 点击地址栏左侧的图标（锁或信息图标）\n2. 找到"麦克风"权限\n3. 设置为"允许"\n4. 刷新页面后重新进入语音室')
-        setCurrentVoiceRoom(null)
-        return
-      }
-
-      const stream = await enableMicrophone(selectedDevice || undefined)
-      if (!stream) {
-        setCurrentVoiceRoom(null)
-        return
-      }
-
-      // 把自己加入到房间列表
-      const myPeerId = connectionManager.getPeerId()
-      setPlayersInRooms(prev => {
-        const newMap = new Map(prev)
-        const roomPlayers = newMap.get(newRoomId) || new Set()
-        roomPlayers.add(myPeerId)
-        newMap.set(newRoomId, roomPlayers)
-        return newMap
-      })
-
-      const joinUpdate: VoiceRoomUpdate = {
-        type: 'voice-join',
-        peerId: myPeerId,
-        roomId: newRoomId,
-        timestamp: Date.now()
-      }
-      broadcastVoiceUpdate(joinUpdate)
-
-      const playersInRoom = playersInRooms.get(newRoomId)
-      if (playersInRoom && playersInRoom.size > 0) {
-        playersInRoom.forEach(peerId => {
-          if (peerId !== myPeerId) {
-            callPeer(peerId, stream)
+        if (stream) {
+          const playersInRoom = playersInRooms.get(currentVoiceRoom)
+          if (playersInRoom && playersInRoom.size > 0) {
+            const myPeerId = connectionManager.getPeerId()
+            playersInRoom.forEach(peerId => {
+              if (peerId !== myPeerId) {
+                callPeer(peerId, stream)
+              }
+            })
           }
-        })
-      }
+        }
+      }, 200)
     }
   }
 
@@ -612,7 +585,7 @@ export default function Home() {
     }
 
     // 如果已经有玩家对象，保持当前位置；否则使用默认位置
-    const currentPosition = myPlayerRef.current?.position || {
+    const currentPosition = myPlayer?.position || {
       x: GAME_CONFIG.CANVAS_WIDTH / 2,
       y: GAME_CONFIG.CANVAS_HEIGHT / 2
     }
@@ -727,13 +700,7 @@ export default function Home() {
 
     if (update.type === 'voice-join') {
       // 更新房间内玩家列表
-      setPlayersInRooms(prev => {
-        const newMap = new Map(prev)
-        const roomPlayers = newMap.get(update.roomId) || new Set()
-        roomPlayers.add(fromPeerId)
-        newMap.set(update.roomId, roomPlayers)
-        return newMap
-      })
+      addPlayerToRoom(update.roomId, fromPeerId)
 
       // 如果我也在同一个房间，呼叫这个玩家
       if (currentVoiceRoom === update.roomId && localStreamRef.current) {
@@ -741,19 +708,7 @@ export default function Home() {
       }
     } else if (update.type === 'voice-leave') {
       // 更新房间内玩家列表
-      setPlayersInRooms(prev => {
-        const newMap = new Map(prev)
-        const roomPlayers = newMap.get(update.roomId)
-        if (roomPlayers) {
-          roomPlayers.delete(fromPeerId)
-          if (roomPlayers.size === 0) {
-            newMap.delete(update.roomId)
-          } else {
-            newMap.set(update.roomId, roomPlayers)
-          }
-        }
-        return newMap
-      })
+      removePlayerFromRoom(update.roomId, fromPeerId)
 
       // 挂断与这个玩家的通话
       const call = voiceCallsRef.current.get(fromPeerId)
@@ -779,11 +734,8 @@ export default function Home() {
             velocity: { x: 0, y: 0 },
             lastUpdate: Date.now()
           }
-          setOtherPlayers(prev => {
-            const updated = new Map(prev).set(fromPeerId, newPlayer)
-            console.log('🎮 玩家加入:', update.username, '当前其他玩家数:', updated.size)
-            return updated
-          })
+          setOtherPlayer(fromPeerId, newPlayer)
+          console.log('🎮 玩家加入:', update.username, '当前其他玩家数:', otherPlayers.size + 1)
         } else {
           console.log('⚠️ join 消息缺少必要字段:', update)
         }
@@ -791,28 +743,21 @@ export default function Home() {
 
       case 'position':
         if (update.position) {
-          setOtherPlayers(prev => {
-            const player = prev.get(fromPeerId)
-            if (player) {
-              const updated = {
-                ...player,
-                position: update.position!,
-                velocity: update.velocity || { x: 0, y: 0 },
-                lastUpdate: Date.now()
-              }
-              return new Map(prev).set(fromPeerId, updated)
+          const player = otherPlayers.get(fromPeerId)
+          if (player) {
+            const updated = {
+              ...player,
+              position: update.position!,
+              velocity: update.velocity || { x: 0, y: 0 },
+              lastUpdate: Date.now()
             }
-            return prev
-          })
+            setOtherPlayer(fromPeerId, updated)
+          }
         }
         break
 
       case 'leave':
-        setOtherPlayers(prev => {
-          const newMap = new Map(prev)
-          newMap.delete(fromPeerId)
-          return newMap
-        })
+        removeOtherPlayer(fromPeerId)
         console.log('🎮 玩家离开:', fromPeerId)
         break
     }
@@ -1042,12 +987,9 @@ export default function Home() {
     setIsConnected(false)
     clearMessages()
     setOnlineUsers([])
-    setMyPlayer(null)
     myPlayerRef.current = null
-    setOtherPlayers(new Map())
     setSelectedCharacter(null)
-    setCurrentVoiceRoom(null)
-    setPlayersInRooms(new Map())
+    useGameStore.getState().reset()
 
     console.log('✅ 已完全断开连接')
   }
@@ -1117,165 +1059,27 @@ export default function Home() {
         <div className={styles.gameWorld}>
           {myPlayer && (
             <GameWorld
-              myPlayer={myPlayer}
-              otherPlayers={otherPlayers}
-              onPositionUpdate={handlePositionUpdate}
-              onVoiceRoomChange={handleVoiceRoomChange}
-              currentVoiceRoom={currentVoiceRoom}
-              playersInRooms={playersInRooms}
+              voiceCallbacks={{
+                onEnterRoom: handleEnterVoiceRoom,
+                onLeaveRoom: handleLeaveVoiceRoom
+              }}
             />
           )}
         </div>
 
         {/* 语音室面板 */}
-        {currentVoiceRoom && (
-          <div className={`${styles.voicePanel} ${showVoicePanel ? styles.voicePanelVisible : styles.voicePanelHidden}`}>
-            <div className={styles.voicePanelHeader}>
-              <h3>🎤 语音室 {currentVoiceRoom}</h3>
-              <button
-                onClick={() => setShowVoicePanel(!showVoicePanel)}
-                className={styles.toggleVoiceBtn}
-              >
-                {showVoicePanel ? '▼' : '▲'}
-              </button>
-            </div>
-
-            {showVoicePanel && (
-              <div className={styles.voicePanelContent}>
-                {/* 麦克风设备选择器 */}
-                <div className={styles.deviceSelector}>
-                  <button
-                    onClick={() => {
-                      loadAudioDevices()
-                      setShowDeviceSelector(!showDeviceSelector)
-                    }}
-                    className={styles.deviceSelectorBtn}
-                  >
-                    🎙️ {(() => {
-                      const currentDevice = audioDevices.find(d => d.deviceId === selectedDeviceId)
-                      if (currentDevice) {
-                        return currentDevice.label || '默认麦克风'
-                      }
-                      return '选择麦克风'
-                    })()}
-                  </button>
-
-                  {showDeviceSelector && (
-                    <div className={styles.deviceList}>
-                      {audioDevices.map(device => (
-                        <div
-                          key={device.deviceId}
-                          className={`${styles.deviceItem} ${selectedDeviceId === device.deviceId ? styles.deviceItemSelected : ''}`}
-                          onClick={async () => {
-                            setSelectedDeviceId(device.deviceId)
-                            setShowDeviceSelector(false)
-
-                            // 如果麦克风已启用，重新启用以使用新设备
-                            if (isMicEnabled && currentVoiceRoom) {
-                              voiceCallsRef.current.forEach((call, peerId) => {
-                                call.close()
-                                stopRemoteAudio(peerId)
-                              })
-                              voiceCallsRef.current.clear()
-
-                              disableMicrophone()
-
-                              setTimeout(async () => {
-                                const stream = await enableMicrophone(device.deviceId)
-
-                                if (stream) {
-                                  const playersInRoom = playersInRooms.get(currentVoiceRoom)
-                                  if (playersInRoom && playersInRoom.size > 0) {
-                                    const myPeerId = connectionManager.getPeerId()
-                                    playersInRoom.forEach(peerId => {
-                                      if (peerId !== myPeerId) {
-                                        callPeer(peerId, stream)
-                                      }
-                                    })
-                                  }
-                                }
-                              }, 200)
-                            }
-                          }}
-                        >
-                          {selectedDeviceId === device.deviceId && '✓ '}
-                          {device.label || `麦克风 ${device.deviceId.slice(0, 8)}`}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 我自己 */}
-                <div className={styles.voiceUser}>
-                  <div className={styles.voiceUserInfo}>
-                    <span className={styles.voiceUserName}>
-                      👤 {username} (你)
-                    </span>
-                    <span className={styles.voiceMicStatus}>
-                      {isMicEnabled ? '🎤 开启' : '🔇 关闭'}
-                    </span>
-                  </div>
-                  {isMicEnabled && (
-                    <div className={styles.volumeBar}>
-                      <div
-                        className={styles.volumeLevel}
-                        style={{ width: `${myVolume}%` }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* 房间内的其他玩家 */}
-                {Array.from(playersInRooms.get(currentVoiceRoom) || [])
-                  .filter(peerId => peerId !== myPeerId)
-                  .map(peerId => {
-                    const player = otherPlayers.get(peerId)
-                    const micStatus = playerMicStatus.get(peerId)
-                    const volume = playerVolumes.get(peerId) || 0
-
-                    return (
-                      <div key={peerId} className={styles.voiceUser}>
-                        <div className={styles.voiceUserInfo}>
-                          <span className={styles.voiceUserName}>
-                            {player?.character.emoji || '👤'} {player?.username || '未知玩家'}
-                          </span>
-                          <span className={styles.voiceMicStatus}>
-                            {!micStatus ? (
-                              <span className={styles.micConnecting}>⏳ 连接中...</span>
-                            ) : micStatus.muted ? (
-                              <span className={styles.micMuted}>🔇 静音</span>
-                            ) : micStatus.enabled ? (
-                              <span className={styles.micActive}>🎤 正常</span>
-                            ) : (
-                              <span className={styles.micDisabled}>🔇 关闭</span>
-                            )}
-                          </span>
-                        </div>
-                        {micStatus && micStatus.enabled && !micStatus.muted && (
-                          <div className={styles.volumeBar}>
-                            <div
-                              className={styles.volumeLevel}
-                              style={{ width: `${volume}%` }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-
-                {/* 如果房间里只有自己 */}
-                {(!playersInRooms.get(currentVoiceRoom) ||
-                  playersInRooms.get(currentVoiceRoom)!.size <= 1) && (
-                  <div className={styles.emptyVoiceRoom}>
-                    <p>📭 房间里只有你一个人</p>
-                    <p>等待其他玩家加入...</p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+        <VoicePanel
+          username={username}
+          isMicEnabled={isMicEnabled}
+          myVolume={myVolume}
+          playerMicStatus={playerMicStatus}
+          playerVolumes={playerVolumes}
+          audioDevices={audioDevices}
+          selectedDeviceId={selectedDeviceId}
+          onLoadAudioDevices={loadAudioDevices}
+          onDeviceChange={handleDeviceChange}
+          onSetSelectedDeviceId={setSelectedDeviceId}
+        />
 
         {/* 聊天面板 */}
         <ChatPanel username={username} />
