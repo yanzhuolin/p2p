@@ -97,6 +97,28 @@ export default function Home() {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
       const currentPeerId = connectionManager.getPeerId()
       if (currentPeerId) {
+        // 如果在语音室中，广播离开消息
+        const voiceRoom = useGameStore.getState().currentVoiceRoom
+        if (voiceRoom) {
+          const leaveUpdate: VoiceRoomUpdate = {
+            type: 'voice-leave',
+            peerId: currentPeerId,
+            roomId: voiceRoom,
+            timestamp: Date.now()
+          }
+          const message = JSON.stringify(leaveUpdate)
+          connectionManager.broadcast(message)
+        }
+
+        // 广播玩家离开游戏的消息
+        const leaveGameUpdate: PlayerUpdate = {
+          type: 'leave',
+          peerId: currentPeerId,
+          timestamp: Date.now()
+        }
+        connectionManager.broadcast(JSON.stringify(leaveGameUpdate))
+
+        // 注销 peerId
         const data = JSON.stringify({ peerId: currentPeerId })
         navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([data], { type: 'application/json' }))
       }
@@ -112,6 +134,7 @@ export default function Home() {
   // 组件卸载时清理
   useEffect(() => {
     return () => {
+      // 清理定时器
       if (userListIntervalRef.current) {
         clearInterval(userListIntervalRef.current)
       }
@@ -119,12 +142,9 @@ export default function Home() {
         clearInterval(syncIntervalRef.current)
       }
 
+      // 关闭所有连接
+      // 注意：离开消息的广播由 beforeunload 处理，这里不重复广播
       connectionManager.closeAllConnections()
-
-      const currentPeerId = connectionManager.getPeerId()
-      if (currentPeerId) {
-        navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([JSON.stringify({ peerId: currentPeerId })], { type: 'application/json' }))
-      }
     }
   }, [connectionManager])
 
