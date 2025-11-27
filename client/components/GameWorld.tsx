@@ -6,10 +6,10 @@ import ConnectionManager from '../services/ConnectionManager'
 const connectionManager = ConnectionManager.getInstance()
 
 interface GameWorldProps {
-  // 不需要任何 props
+  fetchOnlineUsers: () => Promise<void>
 }
 
-export default function GameWorld({}: GameWorldProps) {
+export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
   // 从 store 获取状态
   const myPlayer = useGameStore((state) => state.myPlayer)
   const otherPlayers = useGameStore((state) => state.otherPlayers)
@@ -98,8 +98,9 @@ export default function GameWorld({}: GameWorldProps) {
     }
   }
 
-  // 订阅游戏数据更新和玩家移除事件
+  // 订阅游戏数据更新和玩家移除事件，并管理连接
   useEffect(() => {
+    console.log('🎮 GameWorld 挂载 - 开始管理连接, myPlayer:', myPlayer?.username)
     const unsubscribeData = connectionManager.onData((data, fromPeerId) => {
       try {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data
@@ -118,9 +119,17 @@ export default function GameWorld({}: GameWorldProps) {
       console.log('🎮 玩家断开连接:', peerId)
     })
 
+    // 立即获取在线用户并建立连接
+    setTimeout(fetchOnlineUsers, 500)
+
+    // 定期刷新用户列表并建立新连接
+    const userListInterval = setInterval(fetchOnlineUsers, 3000)
+
     return () => {
+      console.log('🎮 GameWorld 卸载 - 停止连接管理')
       unsubscribeData()
       unsubscribePlayerRemoved()
+      clearInterval(userListInterval)
     }
   }, [])
 

@@ -47,7 +47,6 @@ export default function Home() {
   const [connections, setConnections] = useState<Map<string, DataConnection>>(new Map())
 
   // Refs
-  const userListIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const syncIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const myPlayerRef = useRef<Player | null>(null)
 
@@ -135,9 +134,6 @@ export default function Home() {
   useEffect(() => {
     return () => {
       // 清理定时器
-      if (userListIntervalRef.current) {
-        clearInterval(userListIntervalRef.current)
-      }
       if (syncIntervalRef.current) {
         clearInterval(syncIntervalRef.current)
       }
@@ -301,14 +297,7 @@ export default function Home() {
             console.error('注册失败:', error)
           }
 
-          // 延迟后获取用户列表
-          setTimeout(fetchOnlineUsers, 500)
-
-          // 定期刷新用户列表
-          if (userListIntervalRef.current) {
-            clearInterval(userListIntervalRef.current)
-          }
-          userListIntervalRef.current = setInterval(fetchOnlineUsers, 3000)
+          // 注意：连接和定时器的管理移到 GameWorld 组件中
 
           // 如果已经有选中的角色，自动创建玩家；否则显示角色选择
           if (selectedCharacter) {
@@ -379,11 +368,6 @@ export default function Home() {
 
   // 断开连接
   const disconnect = async () => {
-    if (userListIntervalRef.current) {
-      clearInterval(userListIntervalRef.current)
-      userListIntervalRef.current = null
-    }
-
     if (syncIntervalRef.current) {
       clearInterval(syncIntervalRef.current)
       syncIntervalRef.current = null
@@ -487,7 +471,7 @@ export default function Home() {
       <div className={styles.mainContent}>
         {/* 游戏世界 */}
         <div className={styles.gameWorld}>
-          {myPlayer && <GameWorld />}
+          {myPlayer && <GameWorld fetchOnlineUsers={fetchOnlineUsers} />}
         </div>
 
         {/* 语音室面板 */}
