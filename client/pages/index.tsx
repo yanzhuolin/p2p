@@ -1,12 +1,12 @@
-import { useState, useEffect, useRef } from 'react'
-import Peer, { DataConnection } from 'peerjs'
+import {useEffect, useRef, useState} from 'react'
+import {DataConnection} from 'peerjs'
 import GameWorld from '../components/GameWorld'
 import CharacterSelect from '../components/CharacterSelect'
 import ChatPanel from '../components/ChatPanel'
 import VoicePanel from '../components/VoicePanel'
-import { Character, Player, Position, PlayerUpdate, GAME_CONFIG, CHARACTERS, VoiceRoomUpdate } from '@/types/game'
-import { useChatStore } from '@/store/chatStore'
-import { useGameStore } from '@/store/gameStore'
+import {Character, CHARACTERS, GAME_CONFIG, Player, PlayerUpdate, VoiceRoomUpdate} from '@/types/game'
+import {useChatStore} from '@/store/chatStore'
+import {useGameStore} from '@/store/gameStore'
 import ConnectionManager from '@/services/ConnectionManager'
 import styles from '../styles/Game.module.css'
 
@@ -16,19 +16,17 @@ interface OnlineUser {
 }
 
 // 从环境变量读取配置，支持 localhost 和 IP 访问
-const SIGNALING_SERVER = typeof window !== 'undefined'
-  ? window.location.hostname
-  : (process.env.NEXT_PUBLIC_SIGNALING_SERVER || 'localhost')
+// 优先使用浏览器当前访问的主机名，避免证书不匹配问题
+const SERVER_HOST = process.env.NEXT_PUBLIC_SERVER_HOST || 'localhost'
 
-const SIGNALING_PORT = parseInt(process.env.NEXT_PUBLIC_SIGNALING_PORT || '9000', 10)
-
-const PEER_PATH = process.env.NEXT_PUBLIC_PEER_PATH || '/myapp'
+const SERVER_API_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_API_PORT || '3001', 10)
+const SIGNALING_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_SIGNALING_PORT || '9000', 10)
+const PEER_PATH = process.env.NEXT_PUBLIC_SERVER_SIGNALING_PEER_PATH || '/myapp'
 
 // API 服务器地址
-const API_SERVER = process.env.NEXT_PUBLIC_API_SERVER ||
-  (typeof window !== 'undefined'
-    ? `http://${window.location.hostname}:3001`
-    : 'http://localhost:3001')
+const API_SERVER = typeof window !== 'undefined'
+  ? `https://${window.location.hostname}:${SERVER_API_PORT}`
+  : `https://localhost:${SERVER_API_PORT}`
 
 const STORAGE_KEYS = {
   USERNAME: 'p2p-game-username',
@@ -135,8 +133,8 @@ export default function Home() {
         connectionManager.broadcast(JSON.stringify(leaveGameUpdate))
 
         // 注销 peerId
-        const data = JSON.stringify({ peerId: currentPeerId })
-        navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([data], { type: 'application/json' }))
+        const data = JSON.stringify({peerId: currentPeerId})
+        navigator.sendBeacon(`${API_SERVER}/api/unregister`, new Blob([data], {type: 'application/json'}))
       }
     }
 
@@ -162,13 +160,11 @@ export default function Home() {
   }, [connectionManager])
 
 
-
   // 广播游戏状态更新
   const broadcastGameUpdate = (update: PlayerUpdate) => {
     const message = JSON.stringify(update)
     connectionManager.broadcast(message)
   }
-
 
 
   // 处理角色选择
@@ -193,7 +189,7 @@ export default function Home() {
       username,
       character,
       position: currentPosition,
-      velocity: { x: 0, y: 0 },
+      velocity: {x: 0, y: 0},
       lastUpdate: Date.now()
     }
     setMyPlayer(player)
@@ -286,8 +282,6 @@ export default function Home() {
   }
 
 
-
-
   // 连接到服务器
   const connect = async () => {
     if (!username.trim()) {
@@ -302,12 +296,18 @@ export default function Home() {
 
     connectionManager.initializePeer(
       {
-        host: SIGNALING_SERVER,
+        host: SERVER_HOST,
         port: SIGNALING_PORT,
         path: PEER_PATH,
-        debug: parseInt(process.env.NEXT_PUBLIC_PEER_DEBUG_LEVEL || '2', 10),
+        secure: true, // 使用 HTTPS/WSS
+        debug: 2,
         apiServerUrl: API_SERVER,
-        heartbeatInterval: parseInt(process.env.NEXT_PUBLIC_HEARTBEAT_INTERVAL || '10000', 10)
+        heartbeatInterval: 10000,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+          ]
+        }
       },
       {
         onOpen: async (id) => {
@@ -318,8 +318,8 @@ export default function Home() {
           try {
             const response = await fetch(`${API_SERVER}/api/register`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ peerId: id, username })
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({peerId: id, username})
             })
             const data = await response.json()
             if (data.success) {
@@ -341,7 +341,7 @@ export default function Home() {
                 x: GAME_CONFIG.CANVAS_WIDTH / 2,
                 y: GAME_CONFIG.CANVAS_HEIGHT / 2
               },
-              velocity: { x: 0, y: 0 },
+              velocity: {x: 0, y: 0},
               lastUpdate: Date.now()
             }
             setMyPlayer(player)
@@ -440,8 +440,8 @@ export default function Home() {
       try {
         await fetch(`${API_SERVER}/api/unregister`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ peerId: currentPeerId })
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({peerId: currentPeerId})
         })
       } catch (error) {
         console.error('注销失败:', error)
@@ -489,7 +489,7 @@ export default function Home() {
     <div className={styles.gameContainer}>
       {/* 角色选择 */}
       {showCharacterSelect && (
-        <CharacterSelect onSelect={handleCharacterSelect} />
+        <CharacterSelect onSelect={handleCharacterSelect}/>
       )}
 
       {/* 顶部栏 */}
@@ -524,14 +524,14 @@ export default function Home() {
       <div className={styles.mainContent}>
         {/* 游戏世界 */}
         <div className={styles.gameWorld}>
-          {myPlayer && <GameWorld fetchOnlineUsers={fetchOnlineUsers} />}
+          {myPlayer && <GameWorld fetchOnlineUsers={fetchOnlineUsers}/>}
         </div>
 
         {/* 语音室面板 */}
-        <VoicePanel username={username} />
+        <VoicePanel username={username}/>
 
         {/* 聊天面板 */}
-        <ChatPanel username={username} />
+        <ChatPanel username={username}/>
       </div>
     </div>
   )

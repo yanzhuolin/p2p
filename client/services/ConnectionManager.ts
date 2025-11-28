@@ -1,4 +1,4 @@
-import Peer, { DataConnection, MediaConnection } from 'peerjs'
+import Peer, {DataConnection, MediaConnection} from 'peerjs'
 
 type ConnectionChangeCallback = (connections: Map<string, DataConnection>) => void
 type PeerIdChangeCallback = (peerId: string) => void
@@ -33,11 +33,11 @@ class ConnectionManager {
   private playerRemovedCallbacks: Set<PlayerRemovedCallback> = new Set()
   private callCallbacks: Set<CallCallback> = new Set()
   private remoteStreamCallbacks: Set<RemoteStreamCallback> = new Set()
-  
+
   private constructor() {
     // 私有构造函数，防止外部实例化
   }
-  
+
   /**
    * 获取单例实例
    */
@@ -47,7 +47,7 @@ class ConnectionManager {
     }
     return ConnectionManager.instance
   }
-  
+
   /**
    * 重置单例（用于测试或完全重置）
    */
@@ -57,28 +57,28 @@ class ConnectionManager {
       ConnectionManager.instance = null
     }
   }
-  
+
   /**
    * 获取 Peer 对象
    */
   public getPeer(): Peer | null {
     return this.peer
   }
-  
+
   /**
    * 设置 Peer 对象
    */
   public setPeer(peer: Peer | null): void {
     this.peer = peer
   }
-  
+
   /**
    * 获取 Peer ID
    */
   public getPeerId(): string {
     return this.peerId
   }
-  
+
   /**
    * 设置 Peer ID
    */
@@ -86,28 +86,28 @@ class ConnectionManager {
     this.peerId = peerId
     this.notifyPeerIdChange(peerId)
   }
-  
+
   /**
    * 获取所有连接
    */
   public getConnections(): Map<string, DataConnection> {
     return this.connections
   }
-  
+
   /**
    * 获取指定的连接
    */
   public getConnection(peerId: string): DataConnection | undefined {
     return this.connections.get(peerId)
   }
-  
+
   /**
    * 检查是否存在指定连接
    */
   public hasConnection(peerId: string): boolean {
     return this.connections.has(peerId)
   }
-  
+
   /**
    * 添加或更新连接
    */
@@ -115,7 +115,7 @@ class ConnectionManager {
     this.connections.set(peerId, connection)
     this.notifyConnectionChange()
   }
-  
+
   /**
    * 移除连接
    */
@@ -123,7 +123,7 @@ class ConnectionManager {
     this.connections.delete(peerId)
     this.notifyConnectionChange()
   }
-  
+
   /**
    * 清空所有连接
    */
@@ -131,7 +131,7 @@ class ConnectionManager {
     this.connections.clear()
     this.notifyConnectionChange()
   }
-  
+
   /**
    * 广播消息到所有连接
    */
@@ -146,7 +146,7 @@ class ConnectionManager {
       }
     })
   }
-  
+
   /**
    * 发送消息到指定连接
    */
@@ -163,7 +163,7 @@ class ConnectionManager {
     }
     return false
   }
-  
+
   /**
    * 关闭所有连接
    */
@@ -177,7 +177,7 @@ class ConnectionManager {
     })
     this.clearConnections()
   }
-  
+
   /**
    * 设置 API 服务器 URL
    */
@@ -196,8 +196,8 @@ class ConnectionManager {
     try {
       await fetch(`${this.apiServerUrl}/api/heartbeat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ peerId: this.peerId }),
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({peerId: this.peerId}),
         signal: AbortSignal.timeout(3000)
       })
     } catch (error) {
@@ -247,7 +247,7 @@ class ConnectionManager {
     this.dataCallbacks.clear()
     this.playerRemovedCallbacks.clear()
   }
-  
+
   /**
    * 订阅连接变化
    */
@@ -258,7 +258,7 @@ class ConnectionManager {
       this.connectionChangeCallbacks.delete(callback)
     }
   }
-  
+
   /**
    * 订阅 Peer ID 变化
    */
@@ -269,7 +269,7 @@ class ConnectionManager {
       this.peerIdChangeCallbacks.delete(callback)
     }
   }
-  
+
   /**
    * 通知连接变化
    */
@@ -283,7 +283,7 @@ class ConnectionManager {
       }
     })
   }
-  
+
   /**
    * 通知 Peer ID 变化
    */
@@ -400,9 +400,11 @@ class ConnectionManager {
       host: string
       port: number
       path: string
+      secure?: boolean
       debug?: number
       apiServerUrl?: string
       heartbeatInterval?: number
+      config?: RTCConfiguration
     },
     callbacks: {
       onOpen?: (id: string) => void
@@ -411,7 +413,12 @@ class ConnectionManager {
       onError?: (err: Error) => void
     }
   ): void {
-    const peer = new Peer(config)
+    console.log('🔗 正在初始化 Peer...', config)
+
+    // 提取自定义参数
+    const { apiServerUrl, heartbeatInterval, ...peerConfig } = config
+
+    const peer = new Peer(peerConfig)
 
     // 设置 API 服务器 URL
     if (config.apiServerUrl) {

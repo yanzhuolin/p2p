@@ -1,4 +1,5 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { PeerServer } = require('peer');
 const express = require('express');
 const cors = require('cors');
@@ -32,9 +33,9 @@ function setupUserRoutes(app) {
   // 在线用户列表
   const onlineUsers = new Map();
 
-  // 从环境变量读取配置
-  const USER_TIMEOUT = parseInt(process.env.USER_TIMEOUT || '30000', 10);
-  const HEARTBEAT_CHECK_INTERVAL = parseInt(process.env.HEARTBEAT_CHECK_INTERVAL || '10000', 10);
+  // 固定配置
+  const USER_TIMEOUT = 30000; // 30秒
+  const HEARTBEAT_CHECK_INTERVAL = 10000; // 10秒
 
   // 用户注册
   app.post('/api/register', (req, res) => {
@@ -102,15 +103,14 @@ function setupUserRoutes(app) {
  * 创建 PeerJS 服务器
  */
 function createPeerServer(options = {}) {
-  const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
-  const PEER_PATH = process.env.PEER_PATH || '/myapp';
-  const PEER_ALLOW_DISCOVERY = process.env.PEER_ALLOW_DISCOVERY !== 'false';
+  const PEER_PORT = parseInt(process.env.SERVER_SIGNALING_PORT || '9000', 10);
+  const PEER_PATH = process.env.SERVER_SIGNALING_PEER_PATH || '/myapp';
 
   const peerServer = PeerServer({
     port: options.port || PEER_PORT,
     path: options.path || PEER_PATH,
     ssl: options.ssl || undefined,
-    allow_discovery: PEER_ALLOW_DISCOVERY,
+    allow_discovery: true,
     generateClientId: () => {
       return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }
@@ -147,10 +147,10 @@ if (require.main === module) {
   setupUserRoutes(app);
   const peerServer = createPeerServer();
 
-  const PORT = parseInt(process.env.PORT || '3001', 10);
-  const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
-  const PEER_PATH = process.env.PEER_PATH || '/myapp';
-  const HOST = process.env.HOST || '0.0.0.0';
+  const PORT = parseInt(process.env.SERVER_API_PORT || '3001', 10);
+  const PEER_PORT = parseInt(process.env.SERVER_SIGNALING_PORT || '9000', 10);
+  const PEER_PATH = process.env.SERVER_SIGNALING_PEER_PATH || '/myapp';
+  const HOST = process.env.SERVER_HOST || '0.0.0.0';
 
   app.listen(PORT, HOST, () => {
     console.log('🚀 ========================================');

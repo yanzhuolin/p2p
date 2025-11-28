@@ -1,5 +1,5 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env.local') });
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { createServer } = require('https');
 const { parse } = require('url');
 const fs = require('fs');
@@ -13,14 +13,14 @@ const port = parseInt(process.env.PORT || '3000', 10);
 const app = next({ dev, dir: __dirname, hostname, port });
 const handle = app.getRequestHandler();
 
-// 从环境变量读取证书路径
-const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '../certs/cert.pem';
-const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '../certs/key.pem';
+// 从环境变量读取证书路径（相对于项目根目录）
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || './certs/cert.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || './certs/key.pem';
 
 // 读取 SSL 证书
 const httpsOptions = {
-  key: fs.readFileSync(path.join(__dirname, SSL_KEY_PATH)),
-  cert: fs.readFileSync(path.join(__dirname, SSL_CERT_PATH))
+  key: fs.readFileSync(path.join(__dirname, '..', SSL_KEY_PATH)),
+  cert: fs.readFileSync(path.join(__dirname, '..', SSL_CERT_PATH))
 };
 
 app.prepare().then(() => {

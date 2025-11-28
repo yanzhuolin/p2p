@@ -1,7 +1,7 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const https = require('https');
 const fs = require('fs');
-const path = require('path');
 const { createApp, setupUserRoutes, createPeerServer } = require('./server');
 
 // 创建 Express 应用并设置路由
@@ -9,12 +9,12 @@ const app = createApp();
 setupUserRoutes(app);
 
 // 从环境变量读取证书路径
-const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '../certs/cert.pem';
-const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '../certs/key.pem';
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || './certs/cert.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || './certs/key.pem';
 
-// 检查证书文件是否存在
-const certPath = path.join(__dirname, SSL_CERT_PATH);
-const keyPath = path.join(__dirname, SSL_KEY_PATH);
+// 检查证书文件是否存在（相对于项目根目录）
+const certPath = path.join(__dirname, '..', SSL_CERT_PATH);
+const keyPath = path.join(__dirname, '..', SSL_KEY_PATH);
 
 if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
   console.error('❌ 错误：未找到 SSL 证书文件！');
@@ -41,10 +41,10 @@ const sslOptions = {
 const httpsServer = https.createServer(sslOptions, app);
 
 // 从环境变量读取配置
-const PORT = parseInt(process.env.PORT || '3001', 10);
-const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
-const PEER_PATH = process.env.PEER_PATH || '/myapp';
-const HOST = process.env.HOST || '0.0.0.0';
+const PORT = parseInt(process.env.SERVER_API_PORT || '3001', 10);
+const PEER_PORT = parseInt(process.env.SERVER_SIGNALING_PORT || '9000', 10);
+const PEER_PATH = process.env.SERVER_SIGNALING_PEER_PATH || '/myapp';
+const HOST = process.env.SERVER_HOST || '0.0.0.0';
 
 // 启动 HTTPS API 服务器
 httpsServer.listen(PORT, HOST, () => {
