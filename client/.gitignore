@@ -9,6 +9,8 @@
 # next.js
 /.next/
 /out/
+/logs/
+/logs_backup/
 
 # production
 /build
