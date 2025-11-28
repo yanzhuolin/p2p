@@ -404,6 +404,17 @@ export default function Home() {
       syncIntervalRef.current = null
     }
 
+    const voiceRoom = useGameStore.getState().currentVoiceRoom
+    if (voiceRoom) {
+      const leaveUpdate: VoiceRoomUpdate = {
+        type: 'voice-leave',
+        peerId: connectionManager.getPeerId(),
+        roomId: voiceRoom,
+        timestamp: Date.now()
+      }
+      const message = JSON.stringify(leaveUpdate)
+      connectionManager.broadcast(message)
+    }
     // 广播离开消息
     const leaveUpdate: PlayerUpdate = {
       type: 'leave',
