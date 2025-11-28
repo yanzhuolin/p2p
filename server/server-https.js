@@ -41,10 +41,10 @@ const sslOptions = {
 const httpsServer = https.createServer(sslOptions, app);
 
 // 从环境变量读取配置
-const PORT = parseInt(process.env.SERVER_API_PORT || '3001', 10);
-const PEER_PORT = parseInt(process.env.SERVER_SIGNALING_PORT || '9000', 10);
-const PEER_PATH = process.env.SERVER_SIGNALING_PEER_PATH || '/myapp';
-const HOST = process.env.SERVER_HOST || '0.0.0.0';
+const PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_API_PORT || '3001', 10);
+const PEER_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_SIGNALING_PORT || '9000', 10);
+const PEER_PATH = process.env.NEXT_PUBLIC_SERVER_SIGNALING_PEER_PATH || '/myapp';
+const HOST = '0.0.0.0';
 
 // 启动 HTTPS API 服务器
 httpsServer.listen(PORT, HOST, () => {
