@@ -4,6 +4,7 @@ module.exports = {
       name: 'p2p-backend',
       script: 'server.js',
       instances: 1,
+      exec_mode: 'fork', // fork 模式（单进程）
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',

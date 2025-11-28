@@ -3,8 +3,9 @@ module.exports = {
     name: 'p2p-frontend',
     script: 'node_modules/next/dist/bin/next',
     args: 'start',
-    instances: 'max', // 使用所有 CPU 核心
-    exec_mode: 'cluster', // 集群模式
+    instances: 1, // 只启动 1 个进程
+    exec_mode: 'fork', // fork 模式（单进程）
+    autorestart: true,
     env: {
       NODE_ENV: 'production',
       PORT: 3000
