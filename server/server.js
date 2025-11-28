@@ -1,3 +1,4 @@
+require('dotenv').config();
 const { PeerServer } = require('peer');
 const express = require('express');
 const cors = require('cors');
@@ -30,6 +31,10 @@ function createApp() {
 function setupUserRoutes(app) {
   // 在线用户列表
   const onlineUsers = new Map();
+
+  // 从环境变量读取配置
+  const USER_TIMEOUT = parseInt(process.env.USER_TIMEOUT || '30000', 10);
+  const HEARTBEAT_CHECK_INTERVAL = parseInt(process.env.HEARTBEAT_CHECK_INTERVAL || '10000', 10);
 
   // 用户注册
   app.post('/api/register', (req, res) => {
@@ -78,18 +83,17 @@ function setupUserRoutes(app) {
     res.json({ users });
   });
 
-  // 清理超时用户（30秒无心跳）
+  // 清理超时用户
   setInterval(() => {
     const now = Date.now();
-    const timeout = 30 * 1000; // 30秒
 
     for (const [peerId, data] of onlineUsers.entries()) {
-      if (now - data.lastHeartbeat > timeout) {
+      if (now - data.lastHeartbeat > USER_TIMEOUT) {
         console.log(`🧹 清理超时用户: ${data.username} (${peerId})`);
         onlineUsers.delete(peerId);
       }
     }
-  }, 10 * 1000); // 每10秒检查一次
+  }, HEARTBEAT_CHECK_INTERVAL);
 
   return onlineUsers;
 }
@@ -98,11 +102,15 @@ function setupUserRoutes(app) {
  * 创建 PeerJS 服务器
  */
 function createPeerServer(options = {}) {
+  const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
+  const PEER_PATH = process.env.PEER_PATH || '/myapp';
+  const PEER_ALLOW_DISCOVERY = process.env.PEER_ALLOW_DISCOVERY !== 'false';
+
   const peerServer = PeerServer({
-    port: options.port || 9000,
-    path: options.path || '/myapp',
+    port: options.port || PEER_PORT,
+    path: options.path || PEER_PATH,
     ssl: options.ssl || undefined,
-    allow_discovery: true,
+    allow_discovery: PEER_ALLOW_DISCOVERY,
     generateClientId: () => {
       return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }
@@ -139,12 +147,16 @@ if (require.main === module) {
   setupUserRoutes(app);
   const peerServer = createPeerServer();
 
-  const PORT = process.env.PORT || 3001;
-  app.listen(PORT, () => {
+  const PORT = parseInt(process.env.PORT || '3001', 10);
+  const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
+  const PEER_PATH = process.env.PEER_PATH || '/myapp';
+  const HOST = process.env.HOST || '0.0.0.0';
+
+  app.listen(PORT, HOST, () => {
     console.log('🚀 ========================================');
     console.log(`🚀 PeerJS信令服务器已启动`);
     console.log(`🚀 HTTP API: http://localhost:${PORT}`);
-    console.log(`🚀 PeerJS服务: ws://localhost:9000/myapp`);
+    console.log(`🚀 PeerJS服务: ws://localhost:${PEER_PORT}${PEER_PATH}`);
     console.log('🚀 ========================================');
   });
 }

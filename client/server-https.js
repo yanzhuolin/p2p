@@ -1,21 +1,26 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env.local') });
 const { createServer } = require('https');
 const { parse } = require('url');
 const fs = require('fs');
-const path = require('path');
 const next = require('next');
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
-const port = 3000;
+const port = parseInt(process.env.PORT || '3000', 10);
 
 // 初始化 Next.js app（当前目录就是 client 目录）
 const app = next({ dev, dir: __dirname, hostname, port });
 const handle = app.getRequestHandler();
 
-// 读取 SSL 证书（在上级目录的 certs 文件夹）
+// 从环境变量读取证书路径
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '../certs/cert.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '../certs/key.pem';
+
+// 读取 SSL 证书
 const httpsOptions = {
-  key: fs.readFileSync(path.join(__dirname, '../certs/key.pem')),
-  cert: fs.readFileSync(path.join(__dirname, '../certs/cert.pem'))
+  key: fs.readFileSync(path.join(__dirname, SSL_KEY_PATH)),
+  cert: fs.readFileSync(path.join(__dirname, SSL_CERT_PATH))
 };
 
 app.prepare().then(() => {

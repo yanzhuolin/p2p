@@ -1,3 +1,4 @@
+require('dotenv').config();
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -7,9 +8,13 @@ const { createApp, setupUserRoutes, createPeerServer } = require('./server');
 const app = createApp();
 setupUserRoutes(app);
 
+// 从环境变量读取证书路径
+const SSL_CERT_PATH = process.env.SSL_CERT_PATH || '../certs/cert.pem';
+const SSL_KEY_PATH = process.env.SSL_KEY_PATH || '../certs/key.pem';
+
 // 检查证书文件是否存在
-const certPath = path.join(__dirname, '../certs/cert.pem');
-const keyPath = path.join(__dirname, '../certs/key.pem');
+const certPath = path.join(__dirname, SSL_CERT_PATH);
+const keyPath = path.join(__dirname, SSL_KEY_PATH);
 
 if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
   console.error('❌ 错误：未找到 SSL 证书文件！');
@@ -35,9 +40,14 @@ const sslOptions = {
 // 创建 HTTPS 服务器
 const httpsServer = https.createServer(sslOptions, app);
 
+// 从环境变量读取配置
+const PORT = parseInt(process.env.PORT || '3001', 10);
+const PEER_PORT = parseInt(process.env.PEER_PORT || '9000', 10);
+const PEER_PATH = process.env.PEER_PATH || '/myapp';
+const HOST = process.env.HOST || '0.0.0.0';
+
 // 启动 HTTPS API 服务器
-const PORT = process.env.PORT || 3001;
-httpsServer.listen(PORT, '0.0.0.0', () => {
+httpsServer.listen(PORT, HOST, () => {
   console.log('');
   console.log('🔐 ========================================');
   console.log('🔐 HTTPS API 服务器已启动');
@@ -51,10 +61,9 @@ httpsServer.listen(PORT, '0.0.0.0', () => {
 });
 
 // 启动 PeerJS 信令服务器（HTTPS）
-const PEER_PORT = process.env.PEER_PORT || 9000;
 const peerServer = createPeerServer({
   port: PEER_PORT,
-  path: '/myapp',
+  path: PEER_PATH,
   ssl: sslOptions
 });
 
@@ -62,7 +71,7 @@ console.log('🔐 ========================================');
 console.log('🔐 PeerJS 信令服务器已启动');
 console.log('🔐 ========================================');
 console.log('');
-console.log(`  本地访问:   wss://localhost:${PEER_PORT}`);
-console.log(`  局域网访问: wss://你的IP:${PEER_PORT}`);
+console.log(`  本地访问:   wss://localhost:${PEER_PORT}${PEER_PATH}`);
+console.log(`  局域网访问: wss://你的IP:${PEER_PORT}${PEER_PATH}`);
 console.log('');
 

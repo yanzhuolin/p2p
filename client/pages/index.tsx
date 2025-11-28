@@ -15,10 +15,20 @@ interface OnlineUser {
   username: string
 }
 
-// 使用当前主机名，支持 localhost 和 IP 访问
-const SIGNALING_SERVER = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-const SIGNALING_PORT = 9000
-const API_SERVER = typeof window !== 'undefined' ? `https://${window.location.hostname}:3001` : 'https://localhost:3001'
+// 从环境变量读取配置，支持 localhost 和 IP 访问
+const SIGNALING_SERVER = typeof window !== 'undefined'
+  ? window.location.hostname
+  : (process.env.NEXT_PUBLIC_SIGNALING_SERVER || 'localhost')
+
+const SIGNALING_PORT = parseInt(process.env.NEXT_PUBLIC_SIGNALING_PORT || '9000', 10)
+
+const PEER_PATH = process.env.NEXT_PUBLIC_PEER_PATH || '/myapp'
+
+// API 服务器地址
+const API_SERVER = process.env.NEXT_PUBLIC_API_SERVER ||
+  (typeof window !== 'undefined'
+    ? `http://${window.location.hostname}:3001`
+    : 'http://localhost:3001')
 
 const STORAGE_KEYS = {
   USERNAME: 'p2p-game-username',
@@ -294,10 +304,10 @@ export default function Home() {
       {
         host: SIGNALING_SERVER,
         port: SIGNALING_PORT,
-        path: '/myapp',
-        debug: 2,
+        path: PEER_PATH,
+        debug: parseInt(process.env.NEXT_PUBLIC_PEER_DEBUG_LEVEL || '2', 10),
         apiServerUrl: API_SERVER,
-        heartbeatInterval: 10000
+        heartbeatInterval: parseInt(process.env.NEXT_PUBLIC_HEARTBEAT_INTERVAL || '10000', 10)
       },
       {
         onOpen: async (id) => {
