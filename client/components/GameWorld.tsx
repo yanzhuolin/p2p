@@ -34,6 +34,9 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
   const playerPosition = useRef<Position>(myPlayer?.position || { x: 400, y: 300 })
   const playerVelocity = useRef({ x: 0, y: 0 })
 
+  // 鼠标点击移动目标
+  const targetPosition = useRef<Position | null>(null)
+
   // 如果没有玩家数据，不渲染
   if (!myPlayer) return null
 
@@ -140,6 +143,8 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         e.preventDefault()
         keysPressed.current.add(key)
+        // 键盘移动时取消鼠标目标
+        targetPosition.current = null
       }
     }
 
@@ -157,15 +162,60 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
     }
   }, [])
 
+  // 鼠标点击移动
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const handleCanvasClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+
+      // 设置目标位置
+      targetPosition.current = { x, y }
+
+      console.log('🖱️ 点击移动到:', { x, y })
+    }
+
+    canvas.addEventListener('click', handleCanvasClick)
+
+    return () => {
+      canvas.removeEventListener('click', handleCanvasClick)
+    }
+  }, [])
+
   // 更新玩家速度
   const updateVelocity = () => {
     let vx = 0
     let vy = 0
 
-    if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) vy -= 1
-    if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) vy += 1
-    if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) vx -= 1
-    if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) vx += 1
+    // 优先处理键盘输入
+    const hasKeyboardInput = keysPressed.current.size > 0
+
+    if (hasKeyboardInput) {
+      // 键盘控制
+      if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) vy -= 1
+      if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) vy += 1
+      if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) vx -= 1
+      if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) vx += 1
+    } else if (targetPosition.current) {
+      // 鼠标点击移动
+      const dx = targetPosition.current.x - playerPosition.current.x
+      const dy = targetPosition.current.y - playerPosition.current.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+
+      // 如果距离目标很近，停止移动
+      if (distance < 5) {
+        targetPosition.current = null
+        playerVelocity.current = { x: 0, y: 0 }
+        return
+      }
+
+      // 计算方向向量
+      vx = dx / distance
+      vy = dy / distance
+    }
 
     // 归一化对角线移动
     if (vx !== 0 && vy !== 0) {
@@ -404,6 +454,34 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
       drawPlayer(ctx, player, false)
     })
 
+    // 绘制目标位置标记
+    if (targetPosition.current) {
+      const target = targetPosition.current
+      ctx.save()
+
+      // 绘制外圈（动画效果）
+      const time = Date.now() / 1000
+      const pulse = Math.sin(time * 4) * 0.3 + 0.7
+
+      ctx.strokeStyle = `rgba(59, 130, 246, ${pulse})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(target.x, target.y, 15, 0, Math.PI * 2)
+      ctx.stroke()
+
+      // 绘制十字标记
+      ctx.strokeStyle = 'rgba(59, 130, 246, 0.8)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.moveTo(target.x - 10, target.y)
+      ctx.lineTo(target.x + 10, target.y)
+      ctx.moveTo(target.x, target.y - 10)
+      ctx.lineTo(target.x, target.y + 10)
+      ctx.stroke()
+
+      ctx.restore()
+    }
+
     // 绘制信息面板
     ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
     ctx.fillRect(10, 10, 200, 80)
@@ -447,7 +525,8 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
           border: '2px solid #3b82f6',
           borderRadius: '8px',
           boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
-          backgroundColor: '#ffffff'
+          backgroundColor: '#ffffff',
+          cursor: 'crosshair'
         }}
       />
       <div
@@ -464,7 +543,7 @@ export default function GameWorld({ fetchOnlineUsers }: GameWorldProps) {
           fontFamily: 'monospace'
         }}
       >
-        使用 WASD 或方向键移动
+        使用 WASD 或方向键移动，或点击鼠标移动到目标位置
       </div>
     </div>
   )
