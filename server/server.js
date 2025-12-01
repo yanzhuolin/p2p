@@ -10,46 +10,17 @@ const cors = require('cors');
 function createApp() {
   const app = express();
 
-  // ========================================
-  // Cloudflare 兼容的 CORS 配置
-  // ========================================
+  // 配置 CORS - 允许所有来源访问
+  const corsOptions = {
+    origin: true, // 允许所有来源（开发环境）
+    credentials: true, // 允许携带凭证
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 允许的 HTTP 方法
+    allowedHeaders: ['Content-Type', 'Authorization'], // 允许的请求头
+    exposedHeaders: ['Content-Range', 'X-Content-Range'], // 暴露的响应头
+    maxAge: 86400 // 预检请求缓存时间（24小时）
+  };
 
-  // 禁用 Express 的 ETag，避免与 Cloudflare 冲突
-  app.set('etag', false);
-
-  // 添加 CORS 头（必须在所有路由之前）
-  app.use((req, res, next) => {
-    const origin = req.headers.origin || req.headers.referer || '*';
-
-    // 设置 CORS 头
-    res.setHeader('Access-Control-Allow-Origin', origin === '*' ? '*' : origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Date, X-Api-Version');
-    res.setHeader('Access-Control-Max-Age', '86400'); // 24小时
-
-    // Cloudflare 特殊头
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, X-Content-Range');
-
-    // 禁用缓存（避免 Cloudflare 缓存 CORS 响应）
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store');
-
-    // 记录请求
-    console.log(`📡 ${req.method} ${req.path} - Origin: ${origin}`);
-
-    // 处理 OPTIONS 预检请求（立即返回，不继续处理）
-    if (req.method === 'OPTIONS') {
-      console.log('✅ 处理 OPTIONS 预检请求:', req.path);
-      res.status(200).end();
-      return;
-    }
-
-    next();
-  });
-
+  app.use(cors(corsOptions));
   app.use(express.json());
 
   // 健康检查端点
@@ -57,8 +28,7 @@ function createApp() {
     res.json({
       status: 'ok',
       message: 'PeerJS信令服务器运行中',
-      timestamp: new Date().toISOString(),
-      cloudflare: req.headers['cf-ray'] ? 'enabled' : 'disabled'
+      timestamp: new Date().toISOString()
     });
   });
 
