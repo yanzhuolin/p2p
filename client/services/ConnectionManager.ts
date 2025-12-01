@@ -378,7 +378,41 @@ class ConnectionManager {
           if (event.candidate) {
             const candidate = event.candidate
             const type = candidate.type // 'host', 'srflx', 'relay'
-            console.log(`📡 ICE 候选 (${peerId}):`, type, candidate.candidate)
+            const protocol = candidate.protocol // 'udp' or 'tcp'
+
+            // 使用不同的图标标识候选类型
+            let icon = '📡'
+            if (type === 'relay') {
+              icon = '🔄' // TURN 中继
+              console.log(`${icon} TURN 候选 (${peerId}):`, type, protocol, candidate.candidate)
+            } else if (type === 'srflx') {
+              icon = '🌐' // STUN 反射
+              console.log(`${icon} STUN 候选 (${peerId}):`, type, protocol, candidate.candidate)
+            } else {
+              icon = '🏠' // 本地
+              console.log(`${icon} 本地候选 (${peerId}):`, type, protocol, candidate.candidate)
+            }
+          } else {
+            // ICE 候选收集完成
+            console.log(`✅ ICE 候选收集完成 (${peerId})`)
+
+            // 检查是否收集到 relay 候选
+            const stats = conn.peerConnection?.getStats()
+            if (stats) {
+              stats.then((report) => {
+                let hasRelay = false
+                report.forEach((stat) => {
+                  if (stat.type === 'local-candidate' && stat.candidateType === 'relay') {
+                    hasRelay = true
+                  }
+                })
+                if (!hasRelay) {
+                  console.warn(`⚠️ 未收集到 TURN 中继候选 (${peerId})，可能无法穿透某些 NAT`)
+                } else {
+                  console.log(`✅ 已收集到 TURN 中继候选 (${peerId})`)
+                }
+              })
+            }
           }
         }
       }

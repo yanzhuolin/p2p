@@ -376,32 +376,50 @@ export default function Home() {
         heartbeatInterval: 10000,
         config: {
           iceServers: [
-            // Google STUN 服务器
+            // Google STUN 服务器（用于获取公网IP）
             { urls: 'stun:stun.l.google.com:19302' },
             { urls: 'stun:stun1.l.google.com:19302' },
             { urls: 'stun:stun2.l.google.com:19302' },
-            // 免费的 TURN 服务器 (OpenRelay)
+            { urls: 'stun:stun3.l.google.com:19302' },
+            { urls: 'stun:stun4.l.google.com:19302' },
+
+            // Twilio STUN 服务器（备用）
+            { urls: 'stun:global.stun.twilio.com:3478' },
+
+            // 免费的 TURN 服务器 - numb.viagenie.ca
             {
-              urls: 'turn:openrelay.metered.ca:80',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
+              urls: 'turn:numb.viagenie.ca',
+              username: 'webrtc@live.com',
+              credential: 'muazkh'
             },
             {
-              urls: 'turn:openrelay.metered.ca:443',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
+              urls: 'turn:numb.viagenie.ca:3478?transport=tcp',
+              username: 'webrtc@live.com',
+              credential: 'muazkh'
             },
+
+            // 免费的 TURN 服务器 - stunserver.org
             {
-              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-              username: 'openrelayproject',
-              credential: 'openrelayproject'
+              urls: 'turn:turn.stunserver.org:3478',
+              username: 'guest',
+              credential: 'somepassword'
+            },
+
+            // 免费的 TURN 服务器 - relay1.expressturn.com
+            {
+              urls: 'turn:relay1.expressturn.com:3478',
+              username: 'efNLKCTMZG6Y8RU8ND',
+              credential: 'w0GieVfLKT1xBpjT'
             }
           ],
-          // ICE 传输策略：优先使用 relay（TURN）以确保跨网络连接
-          // 可选值: 'all' (默认), 'relay' (仅TURN)
+          // ICE 传输策略：'all' 会尝试所有方式（直连优先，TURN备用）
           iceTransportPolicy: 'all',
-          // 启用 ICE 候选收集
-          iceCandidatePoolSize: 10
+          // 启用 ICE 候选收集，增加候选池大小
+          iceCandidatePoolSize: 10,
+          // 启用 Bundle 策略以提高连接成功率
+          bundlePolicy: 'max-bundle',
+          // RTC 配置
+          rtcpMuxPolicy: 'require'
         }
       },
       {
