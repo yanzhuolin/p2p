@@ -207,7 +207,7 @@ npm run dev
 - 实现消息加密
 - 添加速率限制
 - 使用 HTTPS/WSS
-- 配置 STUN/TURN 服务器
+- ✅ **已配置免费 TURN 服务器** - 支持跨网络 P2P 连接（详见 [NAT_TRAVERSAL_GUIDE.md](./NAT_TRAVERSAL_GUIDE.md)）
 - 实现更完善的错误处理
 
 ## 🛠️ 开发模式

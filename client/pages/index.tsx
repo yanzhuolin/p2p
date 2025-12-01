@@ -376,8 +376,32 @@ export default function Home() {
         heartbeatInterval: 10000,
         config: {
           iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' }
-          ]
+            // Google STUN 服务器
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+            // 免费的 TURN 服务器 (OpenRelay)
+            {
+              urls: 'turn:openrelay.metered.ca:80',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            },
+            {
+              urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+              username: 'openrelayproject',
+              credential: 'openrelayproject'
+            }
+          ],
+          // ICE 传输策略：优先使用 relay（TURN）以确保跨网络连接
+          // 可选值: 'all' (默认), 'relay' (仅TURN)
+          iceTransportPolicy: 'all',
+          // 启用 ICE 候选收集
+          iceCandidatePoolSize: 10
         }
       },
       {

@@ -356,16 +356,49 @@ class ConnectionManager {
         serialization: 'json'
       })
 
+      // 监听底层 RTCPeerConnection 的 ICE 连接状态
+      if (conn.peerConnection) {
+        conn.peerConnection.oniceconnectionstatechange = () => {
+          const state = conn.peerConnection?.iceConnectionState
+          console.log(`🧊 ICE 连接状态 (${peerId}):`, state)
+
+          if (state === 'failed' || state === 'disconnected') {
+            console.warn(`⚠️ ICE 连接失败或断开 (${peerId}):`, state)
+          } else if (state === 'connected' || state === 'completed') {
+            console.log(`✅ ICE 连接成功 (${peerId}):`, state)
+          }
+        }
+
+        conn.peerConnection.onicegatheringstatechange = () => {
+          const state = conn.peerConnection?.iceGatheringState
+          console.log(`🔍 ICE 收集状态 (${peerId}):`, state)
+        }
+
+        conn.peerConnection.onicecandidate = (event) => {
+          if (event.candidate) {
+            const candidate = event.candidate
+            const type = candidate.type // 'host', 'srflx', 'relay'
+            console.log(`📡 ICE 候选 (${peerId}):`, type, candidate.candidate)
+          }
+        }
+      }
+
       const timeoutId = setTimeout(() => {
         if (!conn.open) {
           console.log('⏱️ 连接超时:', peerId)
+          if (conn.peerConnection) {
+            console.log('📊 最终 ICE 状态:', conn.peerConnection.iceConnectionState)
+          }
           conn.close()
         }
-      }, 10000)
+      }, 30000) // 增加到30秒，给TURN中继更多时间
 
       conn.on('open', () => {
         clearTimeout(timeoutId)
         console.log('✅ 已连接到:', peerId)
+        if (conn.peerConnection) {
+          console.log('📊 连接类型:', conn.peerConnection.iceConnectionState)
+        }
         this.setConnection(peerId, conn)
         onConnected?.(peerId)
       })
@@ -383,9 +416,7 @@ class ConnectionManager {
       conn.on('error', (err) => {
         clearTimeout(timeoutId)
         const errorType = (err as any).type
-        if (errorType !== 'peer-unavailable' && errorType !== 'network') {
-          console.error('⚠️ 连接错误:', peerId, errorType)
-        }
+        console.error('⚠️ 连接错误:', peerId, '类型:', errorType, '详情:', err)
       })
     } catch (error) {
       console.error('连接失败:', error)
