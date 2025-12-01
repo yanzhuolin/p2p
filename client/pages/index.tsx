@@ -23,10 +23,36 @@ const SERVER_API_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_API_PORT || '300
 const SIGNALING_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_SIGNALING_PORT || '9000', 10)
 const PEER_PATH = process.env.NEXT_PUBLIC_SERVER_SIGNALING_PEER_PATH || '/myapp'
 
-// API 服务器地址
-const API_SERVER = typeof window !== 'undefined'
-  ? `https://${window.location.hostname}:${SERVER_API_PORT}`
-  : `https://localhost:${SERVER_API_PORT}`
+/**
+ * 根据浏览器当前协议自动选择对应的 API 协议
+ * - 如果浏览器使用 https，则 API 使用 https
+ * - 如果浏览器使用 http，则 API 使用 http
+ */
+const getApiServerUrl = () => {
+  if (typeof window === 'undefined') {
+    return `http://localhost:${SERVER_API_PORT}`
+  }
+
+  const protocol = window.location.protocol // 'http:' 或 'https:'
+  const hostname = window.location.hostname
+  return `${protocol}//${hostname}:${SERVER_API_PORT}`
+}
+
+/**
+ * 检测是否使用安全协议（HTTPS）
+ * - 用于 PeerJS 的 secure 参数
+ * - https 使用 wss（WebSocket Secure）
+ * - http 使用 ws（WebSocket）
+ */
+const isSecureProtocol = () => {
+  if (typeof window === 'undefined') {
+    return false
+  }
+  return window.location.protocol === 'https:'
+}
+
+// API 服务器地址（动态获取）
+const API_SERVER = getApiServerUrl()
 
 const STORAGE_KEYS = {
   USERNAME: 'p2p-game-username',
@@ -299,7 +325,7 @@ export default function Home() {
         host: SERVER_HOST,
         port: SIGNALING_PORT,
         path: PEER_PATH,
-        secure: true, // 使用 HTTPS/WSS
+        secure: isSecureProtocol(), // 根据浏览器协议自动选择 HTTP/HTTPS
         debug: 2,
         apiServerUrl: API_SERVER,
         heartbeatInterval: 10000,
