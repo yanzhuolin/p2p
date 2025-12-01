@@ -10,8 +10,17 @@ const cors = require('cors');
 function createApp() {
   const app = express();
 
-  // 启用CORS
-  app.use(cors());
+  // 配置 CORS - 允许所有来源访问
+  const corsOptions = {
+    origin: true, // 允许所有来源（开发环境）
+    credentials: true, // 允许携带凭证
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 允许的 HTTP 方法
+    allowedHeaders: ['Content-Type', 'Authorization'], // 允许的请求头
+    exposedHeaders: ['Content-Range', 'X-Content-Range'], // 暴露的响应头
+    maxAge: 86400 // 预检请求缓存时间（24小时）
+  };
+
+  app.use(cors(corsOptions));
   app.use(express.json());
 
   // 健康检查端点
