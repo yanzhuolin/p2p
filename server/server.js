@@ -149,8 +149,8 @@ if (require.main === module) {
 
   const PORT = parseInt(process.env.SERVER_API_PORT || '3001', 10);
   const PEER_PORT = parseInt(process.env.SERVER_SIGNALING_PORT || '9000', 10);
-  const PEER_PATH = process.env.SERVER_SIGNALING_PEER_PATH || '/myapp';
-  const HOST = process.env.SERVER_HOST || '0.0.0.0';
+  const PEER_PATH = process.env.NEXT_PUBLIC_SERVER_SIGNALING_PEER_PATH || '/myapp';
+  const HOST = '0.0.0.0';
 
   app.listen(PORT, HOST, () => {
     console.log('🚀 ========================================');
