@@ -12,16 +12,49 @@ function createApp() {
 
   // 配置 CORS - 允许所有来源访问
   const corsOptions = {
-    origin: true, // 允许所有来源（开发环境）
+    origin: function (origin, callback) {
+      // 允许所有来源（包括没有 origin 的请求，如 Postman）
+      console.log('📡 CORS 请求来源:', origin || '(无 origin)');
+      callback(null, true);
+    },
     credentials: true, // 允许携带凭证
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 允许的 HTTP 方法
-    allowedHeaders: ['Content-Type', 'Authorization'], // 允许的请求头
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'], // 允许的 HTTP 方法
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'], // 允许的请求头
     exposedHeaders: ['Content-Range', 'X-Content-Range'], // 暴露的响应头
-    maxAge: 86400 // 预检请求缓存时间（24小时）
+    maxAge: 86400, // 预检请求缓存时间（24小时）
+    optionsSuccessStatus: 200 // 某些旧版浏览器（IE11, 各种 SmartTVs）在 204 上会出问题
   };
 
   app.use(cors(corsOptions));
+
+  // 添加额外的 CORS 头（确保万无一失）
+  app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+      res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+
+    // 处理预检请求
+    if (req.method === 'OPTIONS') {
+      console.log('✅ 处理 OPTIONS 预检请求:', req.path);
+      return res.status(200).end();
+    }
+
+    next();
+  });
+
   app.use(express.json());
+
+  // 请求日志中间件
+  app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.path} - 来源: ${req.headers.origin || '(无)'}`);
+    next();
+  });
 
   // 健康检查端点
   app.get('/health', (req, res) => {
