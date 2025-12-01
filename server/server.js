@@ -10,39 +10,41 @@ const cors = require('cors');
 function createApp() {
   const app = express();
 
-  // 配置 CORS - 允许所有来源访问
-  const corsOptions = {
-    origin: function (origin, callback) {
-      // 允许所有来源（包括没有 origin 的请求，如 Postman）
-      console.log('📡 CORS 请求来源:', origin || '(无 origin)');
-      callback(null, true);
-    },
-    credentials: true, // 允许携带凭证
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH', 'HEAD'], // 允许的 HTTP 方法
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'], // 允许的请求头
-    exposedHeaders: ['Content-Range', 'X-Content-Range'], // 暴露的响应头
-    maxAge: 86400, // 预检请求缓存时间（24小时）
-    optionsSuccessStatus: 200 // 某些旧版浏览器（IE11, 各种 SmartTVs）在 204 上会出问题
-  };
+  // ========================================
+  // Cloudflare 兼容的 CORS 配置
+  // ========================================
 
-  app.use(cors(corsOptions));
+  // 禁用 Express 的 ETag，避免与 Cloudflare 冲突
+  app.set('etag', false);
 
-  // 添加额外的 CORS 头（确保万无一失）
+  // 添加 CORS 头（必须在所有路由之前）
   app.use((req, res, next) => {
-    const origin = req.headers.origin;
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
+    const origin = req.headers.origin || req.headers.referer || '*';
+
+    // 设置 CORS 头
+    res.setHeader('Access-Control-Allow-Origin', origin === '*' ? '*' : origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Date, X-Api-Version');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24小时
 
-    // 处理预检请求
+    // Cloudflare 特殊头
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, X-Content-Range');
+
+    // 禁用缓存（避免 Cloudflare 缓存 CORS 响应）
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
+    // 记录请求
+    console.log(`📡 ${req.method} ${req.path} - Origin: ${origin}`);
+
+    // 处理 OPTIONS 预检请求（立即返回，不继续处理）
     if (req.method === 'OPTIONS') {
       console.log('✅ 处理 OPTIONS 预检请求:', req.path);
-      return res.status(200).end();
+      res.status(200).end();
+      return;
     }
 
     next();
@@ -50,18 +52,13 @@ function createApp() {
 
   app.use(express.json());
 
-  // 请求日志中间件
-  app.use((req, res, next) => {
-    console.log(`📥 ${req.method} ${req.path} - 来源: ${req.headers.origin || '(无)'}`);
-    next();
-  });
-
   // 健康检查端点
   app.get('/health', (req, res) => {
     res.json({
       status: 'ok',
       message: 'PeerJS信令服务器运行中',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      cloudflare: req.headers['cf-ray'] ? 'enabled' : 'disabled'
     });
   });
 
