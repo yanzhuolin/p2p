@@ -15,44 +15,89 @@ interface OnlineUser {
   username: string
 }
 
-// 从环境变量读取配置，支持 localhost 和 IP 访问
-// 优先使用浏览器当前访问的主机名，避免证书不匹配问题
-const SERVER_HOST = process.env.NEXT_PUBLIC_SERVER_HOST || 'localhost'
+// ========================================
+// 前端配置（仅前端使用）
+// ========================================
 
-const SERVER_API_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_API_PORT || '3001', 10)
-const SIGNALING_PORT = parseInt(process.env.NEXT_PUBLIC_SERVER_SIGNALING_PORT || '9000', 10)
+// PeerJS 路径
 const PEER_PATH = process.env.NEXT_PUBLIC_SERVER_SIGNALING_PEER_PATH || '/myapp'
 
 /**
- * 根据浏览器当前协议自动选择对应的 API 协议
- * - 如果浏览器使用 https，则 API 使用 https
- * - 如果浏览器使用 http，则 API 使用 http
+ * 解析完整地址，提取协议、主机名和端口
+ * @param address 完整地址，如 "https://192.168.120.95:3001"
+ * @returns { protocol, hostname, port, isSecure }
  */
-const getApiServerUrl = () => {
-  if (typeof window === 'undefined') {
-    return `http://localhost:${SERVER_API_PORT}`
+const parseAddress = (address: string) => {
+  try {
+    const url = new URL(address)
+    return {
+      protocol: url.protocol.replace(':', ''), // 'http' 或 'https'
+      hostname: url.hostname,
+      port: url.port ? parseInt(url.port, 10) : (url.protocol === 'https:' ? 443 : 80),
+      isSecure: url.protocol === 'https:'
+    }
+  } catch (e) {
+    console.error('解析地址失败:', address, e)
+    return null
   }
-
-  const protocol = window.location.protocol // 'http:' 或 'https:'
-  const hostname = window.location.hostname
-  return `${protocol}//${hostname}:${SERVER_API_PORT}`
 }
 
 /**
- * 检测是否使用安全协议（HTTPS）
- * - 用于 PeerJS 的 secure 参数
- * - https 使用 wss（WebSocket Secure）
- * - http 使用 ws（WebSocket）
+ * 获取 API 服务器地址
+ * 必须配置 NEXT_PUBLIC_API_ADDRESS 环境变量
  */
-const isSecureProtocol = () => {
-  if (typeof window === 'undefined') {
-    return false
+const getApiServerUrl = (): string => {
+  if (!process.env.NEXT_PUBLIC_API_ADDRESS) {
+    console.error('❌ 未配置 NEXT_PUBLIC_API_ADDRESS 环境变量')
+    // 返回默认值，避免应用崩溃
+    return typeof window !== 'undefined'
+      ? `${window.location.protocol}//${window.location.hostname}:3001`
+      : 'http://localhost:3001'
   }
-  return window.location.protocol === 'https:'
+
+  return process.env.NEXT_PUBLIC_API_ADDRESS
 }
 
-// API 服务器地址（动态获取）
+/**
+ * 获取 PeerJS 服务器配置
+ * 必须配置 NEXT_PUBLIC_PEER_ADDRESS 环境变量
+ */
+const getPeerServerConfig = (): { host: string; port: number; secure: boolean } => {
+  if (!process.env.NEXT_PUBLIC_PEER_ADDRESS) {
+    console.error('❌ 未配置 NEXT_PUBLIC_PEER_ADDRESS 环境变量')
+    // 返回默认值，避免应用崩溃
+    const isSecure = typeof window !== 'undefined' && window.location.protocol === 'https:'
+    const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+    return {
+      host: hostname,
+      port: 9000,
+      secure: isSecure
+    }
+  }
+
+  const parsed = parseAddress(process.env.NEXT_PUBLIC_PEER_ADDRESS)
+  if (!parsed) {
+    console.error('❌ 解析 NEXT_PUBLIC_PEER_ADDRESS 失败')
+    // 返回默认值
+    return {
+      host: 'localhost',
+      port: 9000,
+      secure: false
+    }
+  }
+
+  return {
+    host: parsed.hostname,
+    port: parsed.port,
+    secure: parsed.isSecure
+  }
+}
+
+// API 服务器地址（前端连接地址）
 const API_SERVER = getApiServerUrl()
+
+// PeerJS 服务器配置（前端连接配置）
+const PEER_CONFIG = getPeerServerConfig()
 
 const STORAGE_KEYS = {
   USERNAME: 'p2p-game-username',
@@ -322,10 +367,10 @@ export default function Home() {
 
     connectionManager.initializePeer(
       {
-        host: SERVER_HOST,
-        port: SIGNALING_PORT,
+        host: PEER_CONFIG.host,
+        port: PEER_CONFIG.port,
         path: PEER_PATH,
-        secure: isSecureProtocol(), // 根据浏览器协议自动选择 HTTP/HTTPS
+        secure: PEER_CONFIG.secure, // 根据配置的地址协议自动选择 HTTP/HTTPS
         debug: 2,
         apiServerUrl: API_SERVER,
         heartbeatInterval: 10000,
